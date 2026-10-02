@@ -58,23 +58,35 @@ serve(async (req) => {
     // 4. Send Confirmation / Sponsor Email via Brevo REST API v3
     if (brevoApiKey && !isDuplicate) {
       let emailHtml = `
-        <div style="font-family:sans-serif;max-width:550px;margin:auto;border:1px solid #e2e8f0;padding:20px;border-radius:12px;">
-          <h2 style="color:#d97706;margin-top:0;">Attendance Confirmed!</h2>
-          <p>Namaste <strong>${profile.name}</strong>,</p>
-          <p>Your check-in has been successfully registered for <strong>${event.title}</strong> at <strong>${event.venue}</strong>.</p>
+        <div style="font-family: Georgia, serif; max-width: 560px; margin: auto; border: 1px solid #E7DECE; background-color: #FAF6F0; padding: 28px; border-radius: 16px; color: #1E293B;">
+          <div style="text-align: center; margin-bottom: 20px;">
+            <p style="color: #C56B27; font-size: 13px; font-weight: bold; letter-spacing: 1.5px; text-transform: uppercase; margin: 0;">BAPS Swaminarayan Sanstha</p>
+            <h1 style="color: #781D26; margin: 6px 0 0 0; font-size: 24px;">Jai Swaminarayan</h1>
+          </div>
+          
+          <div style="background-color: #ffffff; border: 1px solid #E7DECE; border-radius: 12px; padding: 20px; margin-bottom: 20px;">
+            <h3 style="color: #781D26; margin-top: 0; font-size: 18px;">Attendance Confirmed</h3>
+            <p style="font-size: 14px; line-height: 1.5; color: #334155;">
+              Dear <strong>${profile.name}</strong>, your attendance has been recorded for today’s divine Sabha:
+            </p>
+            <p style="font-size: 15px; font-weight: bold; color: #1E293B; margin: 12px 0 4px 0;">${event.title}</p>
+            <p style="font-size: 13px; color: #64748B; margin: 0;">Venue: ${event.venue}</p>
+          </div>
       `;
 
       if (profile.sponsor_flag) {
         emailHtml += `
-          <div style="background:#fffbeb;border-left:4px solid #d97706;padding:12px;margin:20px 0;border-radius:4px;">
-            <p style="margin:0;font-weight:bold;color:#92400e;">Special Sponsor Recognition</p>
-            <p style="margin:4px 0 0 0;font-style:italic;color:#78350f;">"${event.sponsor_message}"</p>
+          <div style="background-color: #FFF9F2; border-left: 4px solid #C56B27; border-top: 1px solid #E7DECE; border-right: 1px solid #E7DECE; border-bottom: 1px solid #E7DECE; padding: 16px; border-radius: 8px; margin-bottom: 20px;">
+            <p style="margin: 0; font-weight: bold; color: #C56B27; font-size: 13px; text-transform: uppercase; letter-spacing: 0.5px;">Sponsor Gratitude</p>
+            <p style="margin: 6px 0 0 0; font-style: italic; color: #78281F; font-size: 14px; line-height: 1.5;">"${event.sponsor_message}"</p>
           </div>
         `;
       }
 
       emailHtml += `
-          <p style="font-size:12px;color:#94a3b8;margin-top:24px;">Dynamic Sabha Assembly System</p>
+          <p style="font-size: 11px; text-align: center; color: #94A3B8; margin-top: 24px;">
+            Dynamic Sabha Attendance & Event Management System
+          </p>
         </div>
       `;
 
