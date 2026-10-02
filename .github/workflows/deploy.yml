@@ -53,23 +53,29 @@ jobs:
         id: deployment
         uses: actions/deploy-pages@v4
 
-      # Deploy Edge Function to Supabase
+  deploy-edge-function:
+    needs: build-and-deploy
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
       - name: Setup Supabase CLI
         uses: supabase/setup-cli@v1
         with:
           version: latest
 
-      - name: Deploy Edge Function to Supabase
-        env:
-          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
-        run: |
-          supabase functions deploy checkin --project-ref ${{ secrets.SUPABASE_PROJECT_ID }} --no-verify-jwt
-
       - name: Set Brevo Secrets on Supabase
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
         run: |
-          supabase secrets set --project-ref ${{ secrets.SUPABASE_PROJECT_ID }} \
+          supabase secrets set --project-ref "${{ secrets.SUPABASE_PROJECT_ID }}" \
             BREVO_API_KEY="${{ secrets.BREVO_API_KEY }}" \
             BREVO_SENDER_EMAIL="${{ secrets.BREVO_SENDER_EMAIL }}" \
             SUPABASE_SERVICE_ROLE_KEY="${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}"
+
+      - name: Deploy Edge Function
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+        run: |
+          supabase functions deploy checkin --project-ref "${{ secrets.SUPABASE_PROJECT_ID }}" --no-verify-jwt
