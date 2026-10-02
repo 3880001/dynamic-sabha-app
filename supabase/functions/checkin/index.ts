@@ -100,8 +100,8 @@ serve(async (req) => {
           sender: { email: brevoSenderEmail, name: "Sabha Assembly" },
           to: [{ email: profile.email, name: profile.name }],
           subject: profile.sponsor_flag
-            ? `Sabha Check-in Confirmed & Sponsor Gratitude: ${event.title}`
-            : `Sabha Check-in Confirmed: ${event.title}`,
+            ? `Jai Swaminarayan: Attendance & Sponsor Gratitude - ${event.title}`
+            : `Jai Swaminarayan: Attendance Confirmed - ${event.title}`,
           htmlContent: emailHtml,
         }),
       });
