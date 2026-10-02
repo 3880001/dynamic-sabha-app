@@ -43,7 +43,7 @@ export default function App() {
   const handleAuth = async (e: React.FormEvent) => {
     e.preventDefault();
     if (isRegistering) {
-      const { data, error } = await supabase.auth.signUp({
+      const { error } = await supabase.auth.signUp({
         email: authEmail,
         password: authPassword,
         options: { data: { name: authName, role: 'ATTENDEE' } },
