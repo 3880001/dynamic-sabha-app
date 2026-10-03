@@ -1,10 +1,10 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { supabase } from './supabaseClient';
 import { Html5QrcodeScanner } from 'html5-qrcode';
 import {
   Calendar, MapPin, QrCode, CheckCircle2, HeartHandshake, ShieldCheck,
   UserCheck, LogOut, Sparkles, Users, Download, PlusCircle, Award, ListChecks,
-  Printer, X, Navigation, Search, Check
+  Printer, X, Navigation, Check, Loader2
 } from 'lucide-react';
 
 export default function App() {
@@ -19,14 +19,19 @@ export default function App() {
   const [scanStatus, setScanStatus] = useState<any>(null);
   const [verificationMessage, setVerificationMessage] = useState<string | null>(null);
 
+  // Admin & Management State
   const [allUsers, setAllUsers] = useState<any[]>([]);
   const [attendanceStats, setAttendanceStats] = useState<any[]>([]);
   const [rsvpStats, setRsvpStats] = useState<any[]>([]);
   const [showEventModal, setShowEventModal] = useState(false);
 
+  // Live Address Autocomplete State
   const [addressSuggestions, setAddressSuggestions] = useState<any[]>([]);
   const [isSearchingAddress, setIsSearchingAddress] = useState(false);
+  const [showAddressDropdown, setShowAddressDropdown] = useState(false);
+  const addressWrapperRef = useRef<HTMLDivElement>(null);
 
+  // Active QR Poster Modal State
   const [selectedEventForQR, setSelectedEventForQR] = useState<any | null>(null);
   const [qrDataUrl, setQrDataUrl] = useState<string>('');
 
@@ -192,33 +197,51 @@ export default function App() {
     }
   };
 
-  const handleSearchAddress = async () => {
-    if (!newEvent.address.trim()) {
-      alert('Please enter a location or street to search.');
+  // Debounced Live Address Search (Automatically triggers as user types)
+  useEffect(() => {
+    if (!newEvent.address || newEvent.address.trim().length < 3) {
+      setAddressSuggestions([]);
+      setShowAddressDropdown(false);
       return;
     }
-    setIsSearchingAddress(true);
-    try {
-      const res = await fetch(
-        `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(newEvent.address)}&limit=5`
-      );
-      const data = await res.json();
-      if (data && data.length > 0) {
-        setAddressSuggestions(data);
-      } else {
-        alert('No matching addresses found. Please refine your query.');
+
+    const timer = setTimeout(async () => {
+      setIsSearchingAddress(true);
+      try {
+        const res = await fetch(
+          `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(newEvent.address)}&limit=5&addressdetails=1`
+        );
+        const data = await res.json();
+        if (data && data.length > 0) {
+          setAddressSuggestions(data);
+          setShowAddressDropdown(true);
+        } else {
+          setAddressSuggestions([]);
+        }
+      } catch {
         setAddressSuggestions([]);
+      } finally {
+        setIsSearchingAddress(false);
       }
-    } catch {
-      alert('Error searching for address suggestions.');
-    } finally {
-      setIsSearchingAddress(false);
-    }
-  };
+    }, 350);
+
+    return () => clearTimeout(timer);
+  }, [newEvent.address]);
+
+  // Close address dropdown if user clicks outside
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (addressWrapperRef.current && !addressWrapperRef.current.contains(e.target as Node)) {
+        setShowAddressDropdown(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
 
   const handleSelectAddress = (selectedDisplayName: string) => {
     setNewEvent((prev) => ({ ...prev, address: selectedDisplayName }));
-    setAddressSuggestions([]);
+    setShowAddressDropdown(false);
   };
 
   const handleCreateEvent = async (e: React.FormEvent) => {
@@ -661,42 +684,41 @@ export default function App() {
                     />
                   </div>
 
-                  <div>
-                    <label className="text-[11px] font-bold text-slate-600 uppercase">Physical Street Address</label>
-                    <div className="flex gap-2 mt-1">
-                      <input
-                        type="text"
-                        required
-                        placeholder="Type address or Mandir location..."
-                        value={newEvent.address}
-                        onChange={(e) => setNewEvent({ ...newEvent, address: e.target.value })}
-                        className="flex-1 px-3 py-2 border rounded-lg text-xs"
-                      />
-                      <button
-                        type="button"
-                        onClick={handleSearchAddress}
-                        disabled={isSearchingAddress}
-                        className="px-3 py-2 bg-[#C56B27] text-white rounded-lg text-xs font-bold flex items-center gap-1 hover:bg-[#781D26] transition shrink-0"
-                      >
-                        <Search className="w-3.5 h-3.5" />
-                        {isSearchingAddress ? 'Searching...' : 'Find'}
-                      </button>
-                    </div>
+                  {/* Physical Street Address with Debounced Live Suggestions */}
+                  <div ref={addressWrapperRef} className="relative">
+                    <label className="text-[11px] font-bold text-slate-600 uppercase flex items-center justify-between">
+                      <span>Physical Street Address</span>
+                      {isSearchingAddress && (
+                        <span className="flex items-center gap-1 text-[10px] text-[#C56B27] font-semibold lowercase">
+                          <Loader2 className="w-3 h-3 animate-spin" /> searching...
+                        </span>
+                      )}
+                    </label>
 
-                    {addressSuggestions.length > 0 && (
-                      <div className="mt-2 bg-white border border-[#E7DECE] rounded-xl shadow-lg overflow-hidden divide-y divide-[#E7DECE]">
-                        <p className="px-3 py-1.5 bg-[#FAF6F0] text-[10px] font-bold uppercase text-[#C56B27]">
-                          Select Matching Address:
-                        </p>
+                    <input
+                      type="text"
+                      required
+                      placeholder="Start typing street address..."
+                      value={newEvent.address}
+                      onChange={(e) => setNewEvent({ ...newEvent, address: e.target.value })}
+                      onFocus={() => {
+                        if (addressSuggestions.length > 0) setShowAddressDropdown(true);
+                      }}
+                      className="w-full mt-1 px-3 py-2 border rounded-lg text-xs focus:outline-none focus:border-[#C56B27]"
+                    />
+
+                    {/* Pop-up options directly beneath as user types */}
+                    {showAddressDropdown && addressSuggestions.length > 0 && (
+                      <div className="absolute left-0 right-0 top-full mt-1 bg-white border border-[#E7DECE] rounded-xl shadow-xl z-30 max-h-52 overflow-y-auto divide-y divide-[#E7DECE]">
                         {addressSuggestions.map((item, idx) => (
                           <button
                             type="button"
                             key={idx}
                             onClick={() => handleSelectAddress(item.display_name)}
-                            className="w-full text-left p-2.5 text-[11px] text-slate-700 hover:bg-amber-50 flex items-center justify-between transition"
+                            className="w-full text-left p-2.5 text-[11px] text-slate-700 hover:bg-amber-50 flex items-start justify-between transition gap-2"
                           >
-                            <span className="line-clamp-2">{item.display_name}</span>
-                            <Check className="w-3.5 h-3.5 text-[#C56B27] shrink-0 ml-2" />
+                            <span className="line-clamp-2 leading-relaxed">{item.display_name}</span>
+                            <Check className="w-3.5 h-3.5 text-[#C56B27] shrink-0 mt-0.5" />
                           </button>
                         ))}
                       </div>
