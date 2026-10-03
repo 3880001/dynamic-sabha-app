@@ -5,7 +5,7 @@ import {
   Calendar, MapPin, QrCode, CheckCircle2, HeartHandshake, ShieldCheck,
   UserCheck, LogOut, Sparkles, Users, Download, PlusCircle, Award, ListChecks,
   Printer, X, Navigation, Check, Loader2, User, Plus, Trash2, ChevronDown, ChevronUp,
-  MessageSquare, Image as ImageIcon, UploadCloud
+  MessageSquare, Image as ImageIcon, UploadCloud, Edit3, Lock
 } from 'lucide-react';
 
 interface Child {
@@ -19,6 +19,7 @@ export default function App() {
   const [profile, setProfile] = useState<any>(null);
   const [activeTab, setActiveTab] = useState<'events' | 'scan' | 'profile' | 'admin'>('events');
   const [events, setEvents] = useState<any[]>([]);
+  const [userRsvps, setUserRsvps] = useState<Record<string, any>>({});
   const [authEmail, setAuthEmail] = useState('');
   const [authPassword, setAuthPassword] = useState('');
   const [authName, setAuthName] = useState('');
@@ -47,6 +48,9 @@ export default function App() {
   const [rsvpAdultCount, setRsvpAdultCount] = useState<number>(1);
   const [rsvpChildCount, setRsvpChildCount] = useState<number>(0);
   const [rsvpRemarks, setRsvpRemarks] = useState<string>('');
+
+  // Editing existing RSVP flag
+  const [editingRsvpEventId, setEditingRsvpEventId] = useState<string | null>(null);
 
   // Flyer Viewer Modal State
   const [selectedFlyerUrl, setSelectedFlyerUrl] = useState<string | null>(null);
@@ -143,6 +147,7 @@ export default function App() {
       setSession(initialSession);
       if (initialSession) {
         fetchProfile(initialSession.user.id);
+        fetchUserRsvps(initialSession.user.id);
         handleUrlParams(initialSession);
       } else {
         handleUrlParams(null);
@@ -153,9 +158,11 @@ export default function App() {
       setSession(newSession);
       if (newSession) {
         fetchProfile(newSession.user.id);
+        fetchUserRsvps(newSession.user.id);
         handleUrlParams(newSession);
       } else {
         setProfile(null);
+        setUserRsvps({});
       }
     });
 
@@ -177,6 +184,17 @@ export default function App() {
       }
     }
     loadEvents();
+  };
+
+  const fetchUserRsvps = async (userId: string) => {
+    const { data } = await supabase.from('rsvp').select('*').eq('user_id', userId);
+    if (data) {
+      const map: Record<string, any> = {};
+      data.forEach((r) => {
+        map[r.event_id] = r;
+      });
+      setUserRsvps(map);
+    }
   };
 
   const loadEvents = async () => {
@@ -217,13 +235,27 @@ export default function App() {
     }
   };
 
+  // Check if RSVP was submitted today (same calendar date)
+  const isRsvpSubmittedToday = (submittedAtIso: string): boolean => {
+    if (!submittedAtIso) return false;
+    const submitted = new Date(submittedAtIso);
+    const today = new Date();
+    return (
+      submitted.getFullYear() === today.getFullYear() &&
+      submitted.getMonth() === today.getMonth() &&
+      submitted.getDate() === today.getDate()
+    );
+  };
+
+  // RSVP Trigger: Open modal for "Yes", or write directly for "Maybe" / "No"
   const handleRSVPClick = async (event: any, status: 'Yes' | 'No' | 'Maybe') => {
     if (!session) return;
     if (status === 'Yes') {
+      const existing = userRsvps[event.event_id];
       setRsvpModalEvent(event);
-      setRsvpAdultCount(1);
-      setRsvpChildCount(0);
-      setRsvpRemarks('');
+      setRsvpAdultCount(existing?.adult_count || 1);
+      setRsvpChildCount(existing?.child_count || 0);
+      setRsvpRemarks(existing?.remarks || '');
     } else {
       const { error } = await supabase.from('rsvp').upsert({
         user_id: session.user.id,
@@ -236,6 +268,8 @@ export default function App() {
       if (error) alert(error.message);
       else {
         alert(`RSVP recorded: ${status}`);
+        setEditingRsvpEventId(null);
+        fetchUserRsvps(session.user.id);
         loadAdminData();
       }
     }
@@ -264,6 +298,8 @@ export default function App() {
     } else {
       alert(`Jai Swaminarayan! RSVP confirmed for ${rsvpAdultCount + (rsvpChildCount || 0)} total attendees.`);
       setRsvpModalEvent(null);
+      setEditingRsvpEventId(null);
+      fetchUserRsvps(session.user.id);
       loadAdminData();
     }
   };
@@ -582,6 +618,9 @@ export default function App() {
     );
   }
 
+  // Active / non-expired events filter for attendees
+  const activeEvents = events.filter((ev) => new Date(ev.date_time).getTime() > Date.now());
+
   const confirmedYesRsvps = rsvpStats.filter((r) => r.status === 'Yes');
   const totalHeadcount = confirmedYesRsvps.reduce(
     (sum, r) => sum + (Number(r.adult_count) || 1) + (Number(r.child_count) || 0),
@@ -619,96 +658,174 @@ export default function App() {
       </header>
 
       <main className="p-4">
-        {/* TAB 1: SABHA EVENTS FEED */}
+        {/* TAB 1: SABHA KARYAKRAM FEED */}
         {activeTab === 'events' && (
           <div className="space-y-4">
             <div className="flex justify-between items-center mb-1">
-              <h2 className="text-lg font-serif font-bold text-[#781D26]">Sabha Assemblies</h2>
+              <h2 className="text-lg font-serif font-bold text-[#781D26]">Sabha Karyakram</h2>
               <span className="text-[11px] bg-amber-100 text-[#C56B27] font-semibold px-2 py-0.5 rounded-full border border-amber-200">
                 Weekly Satsang
               </span>
             </div>
 
-            {events.length === 0 ? (
+            {activeEvents.length === 0 ? (
               <div className="bg-white border border-[#E7DECE] rounded-2xl p-8 text-center text-slate-400 text-sm">
-                No scheduled assemblies found.
+                No scheduled upcoming assemblies found.
               </div>
             ) : (
-              events.map((ev) => (
-                <div key={ev.event_id} className="bg-white border border-[#E7DECE] rounded-2xl p-4 shadow-sm overflow-hidden">
-                  {/* Event Flyer Display (If Available) */}
-                  {ev.flyer_url && (
-                    <div className="mb-3 rounded-xl overflow-hidden border border-[#E7DECE] relative group cursor-pointer"
-                         onClick={() => setSelectedFlyerUrl(ev.flyer_url)}>
-                      <img
-                        src={ev.flyer_url}
-                        alt="Invitation Flyer"
-                        className="w-full max-h-48 object-cover object-top hover:opacity-95 transition"
-                      />
-                      <div className="absolute bottom-2 right-2 bg-black/60 backdrop-blur-sm text-white px-2 py-0.5 rounded-md text-[10px] font-bold flex items-center gap-1">
-                        <ImageIcon className="w-3 h-3" /> Tap to view flyer
-                      </div>
-                    </div>
-                  )}
+              activeEvents.map((ev) => {
+                const userRsvp = userRsvps[ev.event_id];
+                const isCompleted = !!userRsvp;
+                const isEditing = editingRsvpEventId === ev.event_id;
+                const lockedToday = isCompleted && isRsvpSubmittedToday(userRsvp.created_at);
 
-                  <div className="flex justify-between items-start">
-                    <h3 className="font-serif font-bold text-lg text-slate-900">{ev.title}</h3>
-                    {(profile?.role === 'SUPER_ADMIN' || profile?.role === 'ORGANIZER') && (
-                      <button
-                        onClick={() => openQRPoster(ev)}
-                        className="flex items-center gap-1 bg-amber-50 hover:bg-amber-100 border border-amber-300 text-[#C56B27] px-2.5 py-1 rounded-lg text-xs font-bold transition shrink-0"
+                return (
+                  <div key={ev.event_id} className="bg-white border border-[#E7DECE] rounded-2xl p-4 shadow-sm overflow-hidden">
+                    {/* Event Flyer */}
+                    {ev.flyer_url && (
+                      <div
+                        className="mb-3 rounded-xl overflow-hidden border border-[#E7DECE] relative group cursor-pointer"
+                        onClick={() => setSelectedFlyerUrl(ev.flyer_url)}
                       >
-                        <QrCode className="w-3.5 h-3.5" /> Entrance QR
-                      </button>
-                    )}
-                  </div>
-
-                  <div className="mt-2.5 space-y-1.5">
-                    <p className="text-xs text-slate-700 flex items-center gap-1.5">
-                      <Calendar className="w-4 h-4 text-[#C56B27] shrink-0" />
-                      {new Date(ev.date_time).toLocaleDateString([], {
-                        weekday: 'long',
-                        month: 'short',
-                        day: 'numeric',
-                        hour: '2-digit',
-                        minute: '2-digit',
-                      })}
-                    </p>
-                    <p className="text-xs font-semibold text-slate-900 flex items-center gap-1.5">
-                      <MapPin className="w-4 h-4 text-[#C56B27] shrink-0" />
-                      {ev.venue}
-                    </p>
-                    {ev.address && (
-                      <div className="pl-5 flex items-start justify-between gap-2">
-                        <p className="text-[11px] text-slate-500 leading-snug">{ev.address}</p>
-                        <a
-                          href={`https://maps.google.com/?q=${encodeURIComponent(`${ev.venue}, ${ev.address}`)}`}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="shrink-0 flex items-center gap-1 text-[10px] text-[#C56B27] hover:underline font-bold"
-                        >
-                          <Navigation className="w-3 h-3" /> Directions
-                        </a>
+                        <img
+                          src={ev.flyer_url}
+                          alt="Invitation Flyer"
+                          className="w-full max-h-48 object-cover object-top hover:opacity-95 transition"
+                        />
+                        <div className="absolute bottom-2 right-2 bg-black/60 backdrop-blur-sm text-white px-2 py-0.5 rounded-md text-[10px] font-bold flex items-center gap-1">
+                          <ImageIcon className="w-3 h-3" /> Tap to view flyer
+                        </div>
                       </div>
                     )}
-                  </div>
 
-                  <div className="mt-4 pt-3 border-t border-[#F2ECE1] flex justify-between items-center">
-                    <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">RSVP</span>
-                    <div className="flex gap-1.5">
-                      {(['Yes', 'Maybe', 'No'] as const).map((choice) => (
+                    <div className="flex justify-between items-start">
+                      <h3 className="font-serif font-bold text-lg text-slate-900">{ev.title}</h3>
+                      {(profile?.role === 'SUPER_ADMIN' || profile?.role === 'ORGANIZER') && (
                         <button
-                          key={choice}
-                          onClick={() => handleRSVPClick(ev, choice)}
-                          className="px-3 py-1 bg-[#FAF6F0] hover:bg-[#C56B27] hover:text-white border border-[#E7DECE] rounded-lg text-xs font-semibold text-slate-700 transition"
+                          onClick={() => openQRPoster(ev)}
+                          className="flex items-center gap-1 bg-amber-50 hover:bg-amber-100 border border-amber-300 text-[#C56B27] px-2.5 py-1 rounded-lg text-xs font-bold transition shrink-0"
                         >
-                          {choice}
+                          <QrCode className="w-3.5 h-3.5" /> Entrance QR
                         </button>
-                      ))}
+                      )}
+                    </div>
+
+                    <div className="mt-2.5 space-y-1.5">
+                      <p className="text-xs text-slate-700 flex items-center gap-1.5">
+                        <Calendar className="w-4 h-4 text-[#C56B27] shrink-0" />
+                        {new Date(ev.date_time).toLocaleDateString([], {
+                          weekday: 'long',
+                          month: 'short',
+                          day: 'numeric',
+                          hour: '2-digit',
+                          minute: '2-digit',
+                        })}
+                      </p>
+                      <p className="text-xs font-semibold text-slate-900 flex items-center gap-1.5">
+                        <MapPin className="w-4 h-4 text-[#C56B27] shrink-0" />
+                        {ev.venue}
+                      </p>
+                      {ev.address && (
+                        <div className="pl-5 flex items-start justify-between gap-2">
+                          <p className="text-[11px] text-slate-500 leading-snug">{ev.address}</p>
+                          <a
+                            href={`https://maps.google.com/?q=${encodeURIComponent(`${ev.venue}, ${ev.address}`)}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="shrink-0 flex items-center gap-1 text-[10px] text-[#C56B27] hover:underline font-bold"
+                          >
+                            <Navigation className="w-3 h-3" /> Directions
+                          </a>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* RSVP Status / Actions */}
+                    <div className="mt-4 pt-3 border-t border-[#F2ECE1]">
+                      {isCompleted && !isEditing ? (
+                        <div className="space-y-2">
+                          <div className="flex items-center justify-between">
+                            <span className="flex items-center gap-1 text-[11px] font-bold text-emerald-700 uppercase tracking-wider">
+                              <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                              RSVP Status: Completed
+                            </span>
+                            <span
+                              className={`px-2.5 py-0.5 rounded-full text-xs font-bold ${
+                                userRsvp.status === 'Yes'
+                                  ? 'bg-emerald-100 text-emerald-800'
+                                  : userRsvp.status === 'Maybe'
+                                  ? 'bg-amber-100 text-amber-800'
+                                  : 'bg-slate-200 text-slate-700'
+                              }`}
+                            >
+                              {userRsvp.status}
+                            </span>
+                          </div>
+
+                          {userRsvp.status === 'Yes' && (
+                            <div className="text-[10px] text-slate-600 bg-[#FAF6F0] p-2 rounded-lg border border-[#E7DECE] flex justify-between items-center">
+                              <span>
+                                Attendees: <strong>{userRsvp.adult_count || 1} Adult(s)</strong>
+                                {userRsvp.child_count ? `, ${userRsvp.child_count} Child(ren)` : ''}
+                              </span>
+                              <span className="font-bold text-emerald-700">
+                                Total: {(userRsvp.adult_count || 1) + (userRsvp.child_count || 0)}
+                              </span>
+                            </div>
+                          )}
+
+                          {userRsvp.remarks && (
+                            <p className="text-[10px] italic text-slate-500 bg-white p-1.5 rounded border border-[#E7DECE]/60">
+                              Note: "{userRsvp.remarks}"
+                            </p>
+                          )}
+
+                          {/* Modification Lock logic */}
+                          <div className="pt-1 flex items-center justify-between">
+                            {lockedToday ? (
+                              <p className="text-[10px] text-slate-400 italic flex items-center gap-1">
+                                <Lock className="w-3 h-3" /> RSVP locked today. Modifiable starting tomorrow.
+                              </p>
+                            ) : (
+                              <button
+                                onClick={() => setEditingRsvpEventId(ev.event_id)}
+                                className="text-[11px] text-[#C56B27] hover:underline font-bold flex items-center gap-1"
+                              >
+                                <Edit3 className="w-3 h-3" /> Change RSVP Selection
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="flex justify-between items-center">
+                          <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">
+                            {isEditing ? 'Update Response' : 'RSVP'}
+                          </span>
+                          <div className="flex items-center gap-1.5">
+                            {(['Yes', 'Maybe', 'No'] as const).map((choice) => (
+                              <button
+                                key={choice}
+                                onClick={() => handleRSVPClick(ev, choice)}
+                                className="px-3 py-1 bg-[#FAF6F0] hover:bg-[#C56B27] hover:text-white border border-[#E7DECE] rounded-lg text-xs font-semibold text-slate-700 transition"
+                              >
+                                {choice}
+                              </button>
+                            ))}
+                            {isEditing && (
+                              <button
+                                onClick={() => setEditingRsvpEventId(null)}
+                                className="text-[10px] text-slate-400 hover:text-slate-600 underline ml-1"
+                              >
+                                Cancel
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      )}
                     </div>
                   </div>
-                </div>
-              ))
+                );
+              })
             )}
           </div>
         )}
@@ -762,12 +879,12 @@ export default function App() {
           </div>
         )}
 
-        {/* TAB 3: DEVOTEE PROFILE & FAMILY MANAGEMENT */}
+        {/* TAB 3: MY SABHA PROFILE */}
         {activeTab === 'profile' && (
           <div className="bg-white border border-[#E7DECE] rounded-3xl p-5 shadow-sm space-y-4">
             <div className="flex items-center gap-2 text-[#781D26]">
               <User className="w-6 h-6 text-[#C56B27]" />
-              <h2 className="text-lg font-serif font-bold">My Devotee Profile</h2>
+              <h2 className="text-lg font-serif font-bold">My Sabha Profile</h2>
             </div>
             <p className="text-xs text-slate-500">
               Update your personal and family member details for Sabha records.
@@ -952,13 +1069,13 @@ export default function App() {
                     onClick={exportRsvpCSV}
                     className="flex items-center gap-1 px-2.5 py-1 bg-[#FAF6F0] hover:bg-slate-100 border border-[#E7DECE] rounded-lg text-[11px] font-semibold text-slate-700"
                   >
-                    <Download className="w-3 h-3" /> RSVP CSV
+                    <Download className="w-3.5 h-3.5" /> RSVP CSV
                   </button>
                   <button
                     onClick={exportAttendanceCSV}
                     className="flex items-center gap-1 px-2.5 py-1 bg-[#FAF6F0] hover:bg-slate-100 border border-[#E7DECE] rounded-lg text-[11px] font-semibold text-slate-700"
                   >
-                    <Download className="w-3 h-3" /> Check-In CSV
+                    <Download className="w-3.5 h-3.5" /> Check-In CSV
                   </button>
                 </div>
               </div>
@@ -1012,7 +1129,6 @@ export default function App() {
                     />
                   </div>
 
-                  {/* Physical Address Search */}
                   <div ref={addressWrapperRef} className="relative">
                     <label className="text-[11px] font-bold text-slate-600 uppercase flex items-center justify-between">
                       <span>Physical Street Address</span>
@@ -1052,7 +1168,6 @@ export default function App() {
                     )}
                   </div>
 
-                  {/* Optional Event Flyer Upload Input */}
                   <div className="p-3 bg-[#FAF6F0] border border-[#E7DECE] rounded-xl">
                     <label className="text-[11px] font-bold text-slate-700 uppercase flex items-center gap-1.5 mb-1">
                       <UploadCloud className="w-4 h-4 text-[#C56B27]" />
@@ -1107,7 +1222,7 @@ export default function App() {
               )}
             </div>
 
-            {/* RSVP Roster */}
+            {/* Admin / Organizer RSVP Roster (includes all past & active records) */}
             <div className="bg-white border border-[#E7DECE] rounded-2xl p-4">
               <div className="flex justify-between items-center mb-1">
                 <h3 className="font-serif font-bold text-slate-900 text-sm">RSVP Roster</h3>
