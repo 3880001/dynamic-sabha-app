@@ -13,8 +13,30 @@ export default function App() {
   const [authName, setAuthName] = useState('');
   const [isRegistering, setIsRegistering] = useState(false);
   const [scanStatus, setScanStatus] = useState<any>(null);
+  const [verificationMessage, setVerificationMessage] = useState<string | null>(null);
 
   useEffect(() => {
+    // 1. Check for token_hash in URL from confirmation link
+    const handleUrlConfirmation = async () => {
+      const params = new URLSearchParams(window.location.search);
+      const token_hash = params.get('token_hash');
+      const type = params.get('type') as any;
+
+      if (token_hash && type) {
+        const { error } = await supabase.auth.verifyOtp({ token_hash, type });
+        if (!error) {
+          setVerificationMessage('Email successfully verified! You are now signed in.');
+          // Remove query params from address bar cleanly
+          window.history.replaceState({}, document.title, window.location.pathname);
+        } else {
+          setVerificationMessage('Verification failed or link expired. Please try signing in.');
+        }
+      }
+    };
+
+    handleUrlConfirmation();
+
+    // 2. Manage Auth Session
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session);
       if (session) fetchProfile(session.user.id);
@@ -44,15 +66,15 @@ export default function App() {
     e.preventDefault();
     if (isRegistering) {
       const { error } = await supabase.auth.signUp({
-     email: authEmail,
-     password: authPassword,
-     options: { 
-       data: { name: authName, role: 'ATTENDEE' },
-       emailRedirectTo: 'https://3880001.github.io/dynamic-sabha-app/'
-     },
-   });
+        email: authEmail,
+        password: authPassword,
+        options: { 
+          data: { name: authName, role: 'ATTENDEE' },
+          emailRedirectTo: 'https://3880001.github.io/dynamic-sabha-app/'
+        },
+      });
       if (error) alert(error.message);
-      else alert('Jai Swaminarayan! Registration completed. You can now sign in.');
+      else alert('Jai Swaminarayan! Verification link sent to your email.');
     } else {
       const { error } = await supabase.auth.signInWithPassword({
         email: authEmail,
@@ -73,6 +95,7 @@ export default function App() {
     else alert(`RSVP recorded: ${status}`);
   };
 
+  // QR Scanner Lifecycle
   useEffect(() => {
     if (activeTab !== 'scan') return;
     const scanner = new Html5QrcodeScanner('qr-box', { fps: 10, qrbox: 250 }, false);
@@ -106,14 +129,20 @@ export default function App() {
     return (
       <div className="min-h-screen bg-[#FAF6F0] flex flex-col justify-center items-center px-4 py-8">
         <div className="w-full max-w-sm bg-white border border-[#E7DECE] rounded-3xl p-6 shadow-md text-center">
-          {/* Emblem Icon */}
           <div className="w-16 h-16 mx-auto mb-3 rounded-full bg-gradient-to-tr from-[#781D26] to-[#C56B27] flex items-center justify-center text-white shadow-inner">
             <Sparkles className="w-8 h-8 text-amber-200" />
           </div>
           
           <span className="text-xs uppercase tracking-widest font-bold text-[#C56B27]">BAPS Swaminarayan Sanstha</span>
           <h1 className="text-2xl font-serif font-bold text-[#781D26] mt-1">Dynamic Sabha Portal</h1>
-          <p className="text-xs text-slate-500 mt-1 mb-6">Attendance & Event Check-In</p>
+          <p className="text-xs text-slate-500 mt-1 mb-4">Attendance & Event Check-In</p>
+
+          {/* Verification Banner */}
+          {verificationMessage && (
+            <div className="mb-4 p-3 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-xl text-xs font-semibold">
+              {verificationMessage}
+            </div>
+          )}
 
           <form onSubmit={handleAuth} className="space-y-4 text-left">
             {isRegistering && (
@@ -160,7 +189,7 @@ export default function App() {
           </form>
 
           <button
-            onClick={() => setIsRegistering(!isRegistering)}
+            onClick={() => { setIsRegistering(!isRegistering); setVerificationMessage(null); }}
             className="w-full text-center text-xs text-[#781D26] font-medium mt-5 underline"
           >
             {isRegistering ? 'Already have an account? Sign In' : 'First time attendee? Register here'}
@@ -172,7 +201,6 @@ export default function App() {
 
   return (
     <div className="max-w-md mx-auto min-h-screen bg-[#FAF6F0] pb-24">
-      {/* Top App Header */}
       <header className="bg-white border-b border-[#E7DECE] px-4 py-3 flex justify-between items-center sticky top-0 z-10">
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 rounded-full bg-gradient-to-br from-[#781D26] to-[#C56B27] flex items-center justify-center text-white">
@@ -192,9 +220,7 @@ export default function App() {
         </button>
       </header>
 
-      {/* Main Container */}
       <main className="p-4">
-        {/* TAB 1: EVENTS */}
         {activeTab === 'events' && (
           <div className="space-y-4">
             <div className="flex justify-between items-center mb-1">
@@ -253,7 +279,6 @@ export default function App() {
           </div>
         )}
 
-        {/* TAB 2: QR CHECK-IN */}
         {activeTab === 'scan' && (
           <div className="bg-white border border-[#E7DECE] rounded-3xl p-6 text-center shadow-sm">
             <h2 className="text-xl font-serif font-bold text-[#781D26] mb-1">Entrance Check-In</h2>
@@ -281,7 +306,6 @@ export default function App() {
                 <p className="text-sm font-semibold text-[#781D26] mt-1">Attendance Registered</p>
                 <p className="text-xs text-slate-500 mt-0.5">{scanStatus.eventTitle}</p>
 
-                {/* Sponsor Gratitude Callout */}
                 {scanStatus.isSponsor && (
                   <div className="mt-5 p-4 bg-gradient-to-br from-[#FFF9F2] to-[#FAF1E3] border border-[#E7DECE] rounded-2xl text-left shadow-sm">
                     <div className="flex items-center gap-1.5 text-[#C56B27] font-bold text-xs uppercase tracking-wide">
@@ -304,7 +328,6 @@ export default function App() {
           </div>
         )}
 
-        {/* TAB 3: ADMIN / ORGANIZER */}
         {activeTab === 'admin' && profile?.role !== 'ATTENDEE' && (
           <div className="bg-white border border-[#E7DECE] rounded-3xl p-5 shadow-sm space-y-4">
             <div className="flex items-center gap-2 text-[#781D26]">
@@ -322,7 +345,6 @@ export default function App() {
         )}
       </main>
 
-      {/* Mobile Bottom Navigation */}
       <footer className="fixed bottom-0 left-0 right-0 max-w-md mx-auto bg-white border-t border-[#E7DECE] flex justify-around py-3 z-20">
         <button
           onClick={() => setActiveTab('events')}
