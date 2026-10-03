@@ -372,7 +372,7 @@ export default function App() {
       (decodedText) => {
         scanner.clear();
         const cleanToken = extractToken(decodedText);
-        executeCheckIn(cleanToken, session);
+        executeCheckIn(cleanToken);
       },
       () => {}
     );
