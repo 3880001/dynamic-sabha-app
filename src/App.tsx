@@ -5,7 +5,7 @@ import {
   Calendar, MapPin, QrCode, CheckCircle2, HeartHandshake, ShieldCheck,
   UserCheck, LogOut, Sparkles, Users, Download, PlusCircle, Award, ListChecks,
   Printer, X, Navigation, Check, Loader2, User, Plus, Trash2, ChevronDown, ChevronUp,
-  MessageSquare, Image as ImageIcon, UploadCloud, Edit3, Lock
+  MessageSquare, Image as ImageIcon, UploadCloud, Edit3, Lock, Mail, BellRing
 } from 'lucide-react';
 
 interface Child {
@@ -43,13 +43,20 @@ export default function App() {
   const [showEventModal, setShowEventModal] = useState(false);
   const [expandedUser, setExpandedUser] = useState<string | null>(null);
 
+  // Per-Event Inspection & Manual Reminders
+  const [selectedAdminEventId, setSelectedAdminEventId] = useState<string>('');
+  const [activeRosterSubTab, setActiveRosterSubTab] = useState<'completed' | 'pending_rsvp' | 'pending_checkin'>('completed');
+  const [isSendingReminder, setIsSendingReminder] = useState(false);
+
+  // In-App Pop-up State for Pending RSVP
+  const [showPendingRsvpPopup, setShowPendingRsvpPopup] = useState(false);
+  const [popupEvent, setPopupEvent] = useState<any | null>(null);
+
   // RSVP Modal State
   const [rsvpModalEvent, setRsvpModalEvent] = useState<any | null>(null);
   const [rsvpAdultCount, setRsvpAdultCount] = useState<number>(1);
   const [rsvpChildCount, setRsvpChildCount] = useState<number>(0);
   const [rsvpRemarks, setRsvpRemarks] = useState<string>('');
-
-  // Editing existing RSVP flag
   const [editingRsvpEventId, setEditingRsvpEventId] = useState<string | null>(null);
 
   // Flyer Viewer Modal State
@@ -86,7 +93,7 @@ export default function App() {
         return url.searchParams.get('checkin') || scannedText;
       }
     } catch {
-      // return raw string
+      // not a standard url
     }
     return scannedText.trim();
   };
@@ -199,7 +206,12 @@ export default function App() {
 
   const loadEvents = async () => {
     const { data } = await supabase.from('events').select('*').order('date_time', { ascending: true });
-    if (data) setEvents(data);
+    if (data) {
+      setEvents(data);
+      if (data.length > 0 && !selectedAdminEventId) {
+        setSelectedAdminEventId(data[0].event_id);
+      }
+    }
   };
 
   const loadAdminData = async () => {
@@ -212,6 +224,17 @@ export default function App() {
     const { data: rsvps } = await supabase.from('rsvp').select('*, profiles(name, email), events(title)').order('created_at', { ascending: false });
     if (rsvps) setRsvpStats(rsvps);
   };
+
+  // Check upcoming event to trigger in-app pop-up if RSVP is pending
+  useEffect(() => {
+    if (!session || events.length === 0) return;
+    const now = Date.now();
+    const upcoming = events.find((ev) => new Date(ev.date_time).getTime() > now);
+    if (upcoming && !userRsvps[upcoming.event_id]) {
+      setPopupEvent(upcoming);
+      setShowPendingRsvpPopup(true);
+    }
+  }, [events, userRsvps, session]);
 
   const handleAuth = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -235,7 +258,6 @@ export default function App() {
     }
   };
 
-  // Check if RSVP was submitted today (same calendar date)
   const isRsvpSubmittedToday = (submittedAtIso: string): boolean => {
     if (!submittedAtIso) return false;
     const submitted = new Date(submittedAtIso);
@@ -247,7 +269,6 @@ export default function App() {
     );
   };
 
-  // RSVP Trigger: Open modal for "Yes", or write directly for "Maybe" / "No"
   const handleRSVPClick = async (event: any, status: 'Yes' | 'No' | 'Maybe') => {
     if (!session) return;
     if (status === 'Yes') {
@@ -301,6 +322,31 @@ export default function App() {
       setEditingRsvpEventId(null);
       fetchUserRsvps(session.user.id);
       loadAdminData();
+    }
+  };
+
+  // Dispatch Email Reminders via Edge Function
+  const triggerReminder = async (type: 'rsvp_reminder' | 'checkin_30' | 'checkin_15' | 'checkin_live_15') => {
+    if (!selectedAdminEventId) return;
+    setIsSendingReminder(true);
+    try {
+      const res = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/reminders`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session?.access_token}`,
+        },
+        body: JSON.stringify({
+          manualEventId: selectedAdminEventId,
+          manualType: type,
+        }),
+      });
+      const result = await res.json();
+      alert(`Reminders dispatched successfully! (${result.emailsSent ?? 0} email(s) sent)`);
+    } catch (err: any) {
+      alert(`Error dispatching reminders: ${err.message}`);
+    } finally {
+      setIsSendingReminder(false);
     }
   };
 
@@ -392,7 +438,6 @@ export default function App() {
     setShowAddressDropdown(false);
   };
 
-  // Event Creation with Flyer Upload
   const handleCreateEvent = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsUploadingFlyer(true);
@@ -621,6 +666,7 @@ export default function App() {
   // Active / non-expired events filter for attendees
   const activeEvents = events.filter((ev) => new Date(ev.date_time).getTime() > Date.now());
 
+  // Aggregate stats for overview
   const confirmedYesRsvps = rsvpStats.filter((r) => r.status === 'Yes');
   const totalHeadcount = confirmedYesRsvps.reduce(
     (sum, r) => sum + (Number(r.adult_count) || 1) + (Number(r.child_count) || 0),
@@ -740,7 +786,7 @@ export default function App() {
                       )}
                     </div>
 
-                    {/* RSVP Status / Actions */}
+                    {/* RSVP Status / Choice Lock */}
                     <div className="mt-4 pt-3 border-t border-[#F2ECE1]">
                       {isCompleted && !isEditing ? (
                         <div className="space-y-2">
@@ -780,7 +826,6 @@ export default function App() {
                             </p>
                           )}
 
-                          {/* Modification Lock logic */}
                           <div className="pt-1 flex items-center justify-between">
                             {lockedToday ? (
                               <p className="text-[10px] text-slate-400 italic flex items-center gap-1">
@@ -1041,6 +1086,7 @@ export default function App() {
         {/* TAB 4: ADMIN & ORGANIZER CONSOLE */}
         {activeTab === 'admin' && (profile?.role === 'SUPER_ADMIN' || profile?.role === 'ORGANIZER') && (
           <div className="space-y-6">
+            {/* Top Overview Badges */}
             <div className="grid grid-cols-3 gap-2">
               <div className="bg-white border border-[#E7DECE] rounded-2xl p-3 text-center">
                 <Users className="w-4 h-4 text-slate-500 mx-auto mb-1" />
@@ -1222,59 +1268,183 @@ export default function App() {
               )}
             </div>
 
-            {/* Admin / Organizer RSVP Roster (includes all past & active records) */}
-            <div className="bg-white border border-[#E7DECE] rounded-2xl p-4">
-              <div className="flex justify-between items-center mb-1">
-                <h3 className="font-serif font-bold text-slate-900 text-sm">RSVP Roster</h3>
-                <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-200">
-                  {totalHeadcount} Total Expected
-                </span>
-              </div>
-              <p className="text-[11px] text-slate-500 mb-3">Devotees who have submitted attendance intentions and headcounts.</p>
-
-              {rsvpStats.length === 0 ? (
-                <p className="text-xs text-slate-400 py-3 text-center">No RSVP submissions recorded yet.</p>
-              ) : (
-                <div className="space-y-2">
-                  {rsvpStats.map((r) => {
-                    const adults = r.adult_count || (r.status === 'Yes' ? 1 : 0);
-                    const kids = r.child_count || 0;
-                    const totalDevotees = adults + kids;
-
-                    return (
-                      <div key={r.rsvp_id} className="p-3 bg-[#FAF6F0] border border-[#E7DECE] rounded-xl flex flex-col gap-1.5 text-xs">
-                        <div className="flex justify-between items-start">
-                          <div>
-                            <p className="font-bold text-slate-900">{r.profiles?.name || 'Devotee'}</p>
-                            <p className="text-[10px] text-slate-500">{r.events?.title}</p>
-                          </div>
-                          <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                            r.status === 'Yes' ? 'bg-emerald-100 text-emerald-800' :
-                            r.status === 'Maybe' ? 'bg-amber-100 text-amber-800' : 'bg-slate-200 text-slate-600'
-                          }`}>
-                            {r.status}
-                          </span>
-                        </div>
-
-                        {r.status === 'Yes' && (
-                          <div className="flex flex-wrap gap-2 text-[10px] text-slate-600 bg-white p-2 rounded-lg border border-[#E7DECE]">
-                            <span>Adults (9+ yrs): <strong>{adults}</strong></span>
-                            <span>• Children (&lt;9 yrs): <strong>{kids}</strong></span>
-                            <span>• Total: <strong className="text-emerald-700 font-bold">{totalDevotees}</strong></span>
-                          </div>
-                        )}
-
-                        {r.remarks && (
-                          <div className="text-[10px] text-slate-600 flex items-start gap-1 bg-amber-50/60 p-1.5 rounded border border-amber-200/50 italic">
-                            <MessageSquare className="w-3 h-3 text-[#C56B27] shrink-0 mt-0.5" />
-                            <span>"{r.remarks}"</span>
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
+            {/* Per-Event Breakdown & Reminder Center */}
+            <div className="bg-white border border-[#E7DECE] rounded-2xl p-4 space-y-4">
+              <div className="flex justify-between items-center">
+                <div>
+                  <h3 className="font-serif font-bold text-slate-900 text-sm">Event Inspection & Notification Center</h3>
+                  <p className="text-[11px] text-slate-500">View real-time RSVP & check-in tallies for individual assemblies.</p>
                 </div>
-              )}
+              </div>
+
+              <div>
+                <label className="text-[10px] font-bold text-slate-600 uppercase">Select Assembly</label>
+                <select
+                  value={selectedAdminEventId}
+                  onChange={(e) => setSelectedAdminEventId(e.target.value)}
+                  className="w-full mt-1 px-3 py-2 border rounded-xl text-xs font-semibold bg-white text-slate-800"
+                >
+                  {events.map((ev) => (
+                    <option key={ev.event_id} value={ev.event_id}>
+                      {ev.title} ({new Date(ev.date_time).toLocaleDateString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Action Buttons to Email Pending Attendees */}
+              <div className="flex flex-wrap gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={() => triggerReminder('rsvp_reminder')}
+                  disabled={isSendingReminder || !selectedAdminEventId}
+                  className="flex-1 py-2 px-2.5 bg-blue-50 border border-blue-200 text-blue-800 rounded-xl text-[11px] font-bold hover:bg-blue-100 flex items-center justify-center gap-1.5"
+                >
+                  <Mail className="w-3.5 h-3.5" />
+                  {isSendingReminder ? 'Sending...' : 'Email RSVP Reminders'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => triggerReminder('checkin_30')}
+                  disabled={isSendingReminder || !selectedAdminEventId}
+                  className="flex-1 py-2 px-2.5 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-xl text-[11px] font-bold hover:bg-emerald-100 flex items-center justify-center gap-1.5"
+                >
+                  <BellRing className="w-3.5 h-3.5" />
+                  {isSendingReminder ? 'Sending...' : 'Send Door Check-In Notice'}
+                </button>
+              </div>
+
+              {/* Event Specific Numbers */}
+              {(() => {
+                const currentEvent = events.find((e) => e.event_id === selectedAdminEventId);
+                const eventRsvps = rsvpStats.filter((r) => r.event_id === selectedAdminEventId);
+                const eventCheckins = attendanceStats.filter((a) => a.event_id === selectedAdminEventId);
+
+                const rsvpYesList = eventRsvps.filter((r) => r.status === 'Yes');
+                const rsvpHeadcount = rsvpYesList.reduce(
+                  (sum, r) => sum + (Number(r.adult_count) || 1) + (Number(r.child_count) || 0),
+                  0
+                );
+
+                const answeredUserIds = new Set(eventRsvps.map((r) => r.user_id));
+                const checkedInUserIds = new Set(eventCheckins.map((a) => a.user_id));
+
+                const pendingRsvpUsers = allUsers.filter((u) => !answeredUserIds.has(u.id));
+                const pendingCheckinUsers = allUsers.filter(
+                  (u) => answeredUserIds.has(u.id) && !checkedInUserIds.has(u.id)
+                );
+
+                return (
+                  <div className="space-y-3 pt-2">
+                    <div className="grid grid-cols-3 gap-2">
+                      <div className="bg-[#FAF6F0] border border-[#E7DECE] rounded-xl p-2.5 text-center">
+                        <p className="text-[9px] font-bold uppercase text-blue-700">RSVP Yes (Heads)</p>
+                        <p className="text-base font-black text-blue-900 mt-0.5">
+                          {rsvpYesList.length} <span className="text-xs font-semibold text-blue-600">({rsvpHeadcount})</span>
+                        </p>
+                      </div>
+                      <div className="bg-[#FAF6F0] border border-[#E7DECE] rounded-xl p-2.5 text-center">
+                        <p className="text-[9px] font-bold uppercase text-emerald-700">Checked In</p>
+                        <p className="text-base font-black text-emerald-900 mt-0.5">{eventCheckins.length}</p>
+                      </div>
+                      <div className="bg-[#FAF6F0] border border-[#E7DECE] rounded-xl p-2.5 text-center">
+                        <p className="text-[9px] font-bold uppercase text-amber-700">Pending RSVP</p>
+                        <p className="text-base font-black text-amber-900 mt-0.5">{pendingRsvpUsers.length}</p>
+                      </div>
+                    </div>
+
+                    {/* Sub-Tabs: Responded vs Pending RSVP vs Awaiting Door Check-in */}
+                    <div className="pt-2">
+                      <div className="flex border-b border-[#E7DECE] mb-2 text-xs font-bold">
+                        <button
+                          type="button"
+                          onClick={() => setActiveRosterSubTab('completed')}
+                          className={`pb-2 mr-3 ${activeRosterSubTab === 'completed' ? 'border-b-2 border-[#C56B27] text-[#C56B27]' : 'text-slate-400'}`}
+                        >
+                          Responded ({eventRsvps.length})
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setActiveRosterSubTab('pending_rsvp')}
+                          className={`pb-2 mr-3 ${activeRosterSubTab === 'pending_rsvp' ? 'border-b-2 border-[#C56B27] text-[#C56B27]' : 'text-slate-400'}`}
+                        >
+                          Pending RSVP ({pendingRsvpUsers.length})
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setActiveRosterSubTab('pending_checkin')}
+                          className={`pb-2 ${activeRosterSubTab === 'pending_checkin' ? 'border-b-2 border-[#C56B27] text-[#C56B27]' : 'text-slate-400'}`}
+                        >
+                          Awaiting Check-in ({pendingCheckinUsers.length})
+                        </button>
+                      </div>
+
+                      {activeRosterSubTab === 'completed' && (
+                        <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
+                          {eventRsvps.length === 0 ? (
+                            <p className="text-xs text-slate-400 py-3 text-center">No responses recorded yet.</p>
+                          ) : (
+                            eventRsvps.map((r) => (
+                              <div key={r.rsvp_id} className="p-2.5 bg-[#FAF6F0] rounded-xl flex justify-between items-center text-xs">
+                                <div>
+                                  <p className="font-bold text-slate-900">{r.profiles?.name || 'Devotee'}</p>
+                                  <p className="text-[10px] text-slate-500">{r.profiles?.email}</p>
+                                </div>
+                                <span className={`font-bold px-2 py-0.5 rounded text-[10px] ${
+                                  r.status === 'Yes' ? 'bg-emerald-100 text-emerald-800' :
+                                  r.status === 'Maybe' ? 'bg-amber-100 text-amber-800' : 'bg-slate-200 text-slate-700'
+                                }`}>
+                                  {r.status} {r.status === 'Yes' && `(${(r.adult_count || 1) + (r.child_count || 0)} heads)`}
+                                </span>
+                              </div>
+                            ))
+                          )}
+                        </div>
+                      )}
+
+                      {activeRosterSubTab === 'pending_rsvp' && (
+                        <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
+                          {pendingRsvpUsers.length === 0 ? (
+                            <p className="text-xs text-slate-400 py-3 text-center">All registered devotees have responded!</p>
+                          ) : (
+                            pendingRsvpUsers.map((u) => (
+                              <div key={u.id} className="p-2.5 bg-amber-50/50 border border-amber-200/60 rounded-xl flex justify-between items-center text-xs">
+                                <div>
+                                  <p className="font-bold text-slate-900">{u.name}</p>
+                                  <p className="text-[10px] text-slate-500">{u.email} {u.phone && `• ${u.phone}`}</p>
+                                </div>
+                                <span className="text-[10px] text-amber-800 font-bold bg-amber-100 px-2 py-0.5 rounded">
+                                  No RSVP Yet
+                                </span>
+                              </div>
+                            ))
+                          )}
+                        </div>
+                      )}
+
+                      {activeRosterSubTab === 'pending_checkin' && (
+                        <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
+                          {pendingCheckinUsers.length === 0 ? (
+                            <p className="text-xs text-slate-400 py-3 text-center">No devotees currently awaiting door check-in.</p>
+                          ) : (
+                            pendingCheckinUsers.map((u) => (
+                              <div key={u.id} className="p-2.5 bg-blue-50/50 border border-blue-200/60 rounded-xl flex justify-between items-center text-xs">
+                                <div>
+                                  <p className="font-bold text-slate-900">{u.name}</p>
+                                  <p className="text-[10px] text-slate-500">{u.email}</p>
+                                </div>
+                                <span className="text-[10px] text-blue-800 font-bold bg-blue-100 px-2 py-0.5 rounded">
+                                  Awaiting Door Scan
+                                </span>
+                              </div>
+                            ))
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })()}
             </div>
 
             {/* Devotee Directory */}
@@ -1419,6 +1589,55 @@ export default function App() {
           </div>
         )}
       </main>
+
+      {/* IN-APP POPUP MODAL FOR PENDING RSVP */}
+      {showPendingRsvpPopup && popupEvent && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-[#FAF6F0] border-2 border-[#C56B27] rounded-3xl p-6 w-full max-w-sm shadow-2xl relative text-center">
+            <button
+              onClick={() => setShowPendingRsvpPopup(false)}
+              className="absolute top-4 right-4 p-1.5 bg-slate-200 hover:bg-slate-300 rounded-full text-slate-700"
+            >
+              <X className="w-4 h-4" />
+            </button>
+
+            <div className="w-12 h-12 mx-auto mb-2 rounded-full bg-gradient-to-tr from-[#781D26] to-[#C56B27] flex items-center justify-center text-white shadow">
+              <Sparkles className="w-6 h-6 text-amber-200" />
+            </div>
+
+            <p className="text-[10px] font-bold uppercase tracking-wider text-[#C56B27]">Upcoming Assembly Reminder</p>
+            <h3 className="text-lg font-serif font-black text-[#781D26] mt-1">{popupEvent.title}</h3>
+            <p className="text-xs text-slate-600 mt-1">
+              {new Date(popupEvent.date_time).toLocaleDateString([], { weekday: 'long', month: 'short', day: 'numeric' })} at {popupEvent.venue}
+            </p>
+
+            <div className="my-4 p-3 bg-white rounded-xl border border-[#E7DECE] text-xs text-slate-700 leading-relaxed">
+              Jai Swaminarayan! You haven't submitted your RSVP for this upcoming Sabha yet. Please confirm your attendance to help organizers with seating and Mahaprasad arrangements.
+            </div>
+
+            <div className="flex gap-2">
+              <button
+                onClick={() => {
+                  setShowPendingRsvpPopup(false);
+                  handleRSVPClick(popupEvent, 'Yes');
+                }}
+                className="flex-1 py-2.5 bg-gradient-to-r from-[#C56B27] to-[#781D26] text-white rounded-xl text-xs font-bold shadow"
+              >
+                RSVP Yes
+              </button>
+              <button
+                onClick={() => {
+                  setShowPendingRsvpPopup(false);
+                  handleRSVPClick(popupEvent, 'No');
+                }}
+                className="px-4 py-2.5 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-xl text-xs font-bold"
+              >
+                Can't Attend
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* FULLSCREEN FLYER VIEWER MODAL */}
       {selectedFlyerUrl && (
