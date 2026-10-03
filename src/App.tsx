@@ -4,13 +4,19 @@ import { Html5QrcodeScanner } from 'html5-qrcode';
 import {
   Calendar, MapPin, QrCode, CheckCircle2, HeartHandshake, ShieldCheck,
   UserCheck, LogOut, Sparkles, Users, Download, PlusCircle, Award, ListChecks,
-  Printer, X, Navigation, Check, Loader2
+  Printer, X, Navigation, Check, Loader2, User, Plus, Trash2, ChevronDown, ChevronUp
 } from 'lucide-react';
+
+interface Child {
+  name: string;
+  age_dob: string;
+  phone?: string;
+}
 
 export default function App() {
   const [session, setSession] = useState<any>(null);
   const [profile, setProfile] = useState<any>(null);
-  const [activeTab, setActiveTab] = useState<'events' | 'scan' | 'admin'>('events');
+  const [activeTab, setActiveTab] = useState<'events' | 'scan' | 'profile' | 'admin'>('events');
   const [events, setEvents] = useState<any[]>([]);
   const [authEmail, setAuthEmail] = useState('');
   const [authPassword, setAuthPassword] = useState('');
@@ -19,11 +25,21 @@ export default function App() {
   const [scanStatus, setScanStatus] = useState<any>(null);
   const [verificationMessage, setVerificationMessage] = useState<string | null>(null);
 
+  // Profile Edit State
+  const [editName, setEditName] = useState('');
+  const [editPhone, setEditPhone] = useState('');
+  const [spouseName, setSpouseName] = useState('');
+  const [spouseDobAge, setSpouseDobAge] = useState('');
+  const [spousePhone, setSpousePhone] = useState('');
+  const [children, setChildren] = useState<Child[]>([]);
+  const [profileSaveSuccess, setProfileSaveSuccess] = useState(false);
+
   // Admin & Management State
   const [allUsers, setAllUsers] = useState<any[]>([]);
   const [attendanceStats, setAttendanceStats] = useState<any[]>([]);
   const [rsvpStats, setRsvpStats] = useState<any[]>([]);
   const [showEventModal, setShowEventModal] = useState(false);
+  const [expandedUser, setExpandedUser] = useState<string | null>(null);
 
   // Live Address Autocomplete State
   const [addressSuggestions, setAddressSuggestions] = useState<any[]>([]);
@@ -54,7 +70,7 @@ export default function App() {
         return url.searchParams.get('checkin') || scannedText;
       }
     } catch {
-      // Return raw token if not a valid URL
+      // return raw string
     }
     return scannedText.trim();
   };
@@ -138,6 +154,12 @@ export default function App() {
     const { data } = await supabase.from('profiles').select('*').eq('id', userId).single();
     if (data) {
       setProfile(data);
+      setEditName(data.name || '');
+      setEditPhone(data.phone || '');
+      setSpouseName(data.spouse_name || '');
+      setSpouseDobAge(data.spouse_dob_age || '');
+      setSpousePhone(data.spouse_phone || '');
+      setChildren(Array.isArray(data.children) ? data.children : []);
       if (data.role === 'SUPER_ADMIN' || data.role === 'ORGANIZER') {
         loadAdminData();
       }
@@ -197,7 +219,57 @@ export default function App() {
     }
   };
 
-  // Debounced Live Address Search (Automatically triggers as user types)
+  // Profile Update Handler
+  const handleSaveProfile = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!session) return;
+
+    const { error } = await supabase
+      .from('profiles')
+      .update({
+        name: editName,
+        phone: editPhone,
+        spouse_name: spouseName,
+        spouse_dob_age: spouseDobAge,
+        spouse_phone: spousePhone,
+        children: children,
+      })
+      .eq('id', session.user.id);
+
+    if (error) {
+      alert(error.message);
+    } else {
+      setProfile((prev: any) => ({
+        ...prev,
+        name: editName,
+        phone: editPhone,
+        spouse_name: spouseName,
+        spouse_dob_age: spouseDobAge,
+        spouse_phone: spousePhone,
+        children: children,
+      }));
+      setProfileSaveSuccess(true);
+      setTimeout(() => setProfileSaveSuccess(false), 3000);
+      loadAdminData();
+    }
+  };
+
+  // Dynamic Children State Helpers
+  const addChild = () => {
+    setChildren([...children, { name: '', age_dob: '', phone: '' }]);
+  };
+
+  const removeChild = (index: number) => {
+    setChildren(children.filter((_, i) => i !== index));
+  };
+
+  const updateChild = (index: number, field: keyof Child, value: string) => {
+    const updated = [...children];
+    updated[index] = { ...updated[index], [field]: value };
+    setChildren(updated);
+  };
+
+  // Debounced Live Address Search
   useEffect(() => {
     if (!newEvent.address || newEvent.address.trim().length < 3) {
       setAddressSuggestions([]);
@@ -228,7 +300,6 @@ export default function App() {
     return () => clearTimeout(timer);
   }, [newEvent.address]);
 
-  // Close address dropdown if user clicks outside
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
       if (addressWrapperRef.current && !addressWrapperRef.current.contains(e.target as Node)) {
@@ -440,6 +511,7 @@ export default function App() {
 
   return (
     <div className="max-w-md mx-auto min-h-screen bg-[#FAF6F0] pb-24">
+      {/* Header */}
       <header className="bg-white border-b border-[#E7DECE] px-4 py-3 flex justify-between items-center sticky top-0 z-10">
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 rounded-full bg-gradient-to-br from-[#781D26] to-[#C56B27] flex items-center justify-center text-white">
@@ -462,7 +534,7 @@ export default function App() {
             </h2>
           </div>
         </div>
-        <button onClick={() => supabase.auth.signOut()} className="p-2 text-slate-400 hover:text-[#781D26]">
+        <button onClick={() => supabase.auth.signOut()} className="p-2 text-slate-400 hover:text-[#781D26]" title="Sign Out">
           <LogOut className="w-5 h-5" />
         </button>
       </header>
@@ -596,7 +668,169 @@ export default function App() {
           </div>
         )}
 
-        {/* TAB 3: ADMIN & ORGANIZER CONSOLE */}
+        {/* TAB 3: DEVOTEE PROFILE & FAMILY MANAGEMENT */}
+        {activeTab === 'profile' && (
+          <div className="bg-white border border-[#E7DECE] rounded-3xl p-5 shadow-sm space-y-4">
+            <div className="flex items-center gap-2 text-[#781D26]">
+              <User className="w-6 h-6 text-[#C56B27]" />
+              <h2 className="text-lg font-serif font-bold">My Devotee Profile</h2>
+            </div>
+            <p className="text-xs text-slate-500">
+              Update your personal and family member details for Sabha records.
+            </p>
+
+            {profileSaveSuccess && (
+              <div className="p-3 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-xl text-xs font-semibold">
+                Jai Swaminarayan! Profile details saved successfully.
+              </div>
+            )}
+
+            <form onSubmit={handleSaveProfile} className="space-y-4">
+              {/* Primary User Information */}
+              <div className="p-3 bg-[#FAF6F0] border border-[#E7DECE] rounded-xl space-y-3">
+                <p className="text-xs font-bold uppercase text-[#781D26]">Personal Information</p>
+                <div>
+                  <label className="text-[11px] font-semibold text-slate-600">Full Name</label>
+                  <input
+                    type="text"
+                    required
+                    value={editName}
+                    onChange={(e) => setEditName(e.target.value)}
+                    className="w-full mt-1 px-3 py-1.5 border rounded-lg text-xs bg-white"
+                  />
+                </div>
+                <div>
+                  <label className="text-[11px] font-semibold text-slate-600">Phone Number</label>
+                  <input
+                    type="tel"
+                    placeholder="e.g. +1 416-555-0199"
+                    value={editPhone}
+                    onChange={(e) => setEditPhone(e.target.value)}
+                    className="w-full mt-1 px-3 py-1.5 border rounded-lg text-xs bg-white"
+                  />
+                </div>
+                <div>
+                  <label className="text-[11px] font-semibold text-slate-600">Email Address (Registered)</label>
+                  <input
+                    type="email"
+                    disabled
+                    value={profile?.email || ''}
+                    className="w-full mt-1 px-3 py-1.5 border rounded-lg text-xs bg-slate-100 text-slate-500"
+                  />
+                </div>
+              </div>
+
+              {/* Spouse Information */}
+              <div className="p-3 bg-[#FAF6F0] border border-[#E7DECE] rounded-xl space-y-3">
+                <p className="text-xs font-bold uppercase text-[#781D26]">Spouse Information</p>
+                <div>
+                  <label className="text-[11px] font-semibold text-slate-600">Spouse Full Name</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. Pooja Patel"
+                    value={spouseName}
+                    onChange={(e) => setSpouseName(e.target.value)}
+                    className="w-full mt-1 px-3 py-1.5 border rounded-lg text-xs bg-white"
+                  />
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="text-[11px] font-semibold text-slate-600">DOB or Age</label>
+                    <input
+                      type="text"
+                      placeholder="e.g. 42 or YYYY-MM-DD"
+                      value={spouseDobAge}
+                      onChange={(e) => setSpouseDobAge(e.target.value)}
+                      className="w-full mt-1 px-3 py-1.5 border rounded-lg text-xs bg-white"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[11px] font-semibold text-slate-600">Phone Number</label>
+                    <input
+                      type="tel"
+                      placeholder="e.g. 416-555-0123"
+                      value={spousePhone}
+                      onChange={(e) => setSpousePhone(e.target.value)}
+                      className="w-full mt-1 px-3 py-1.5 border rounded-lg text-xs bg-white"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Children Information with Dynamic Add Button */}
+              <div className="p-3 bg-[#FAF6F0] border border-[#E7DECE] rounded-xl space-y-3">
+                <div className="flex justify-between items-center">
+                  <p className="text-xs font-bold uppercase text-[#781D26]">Children ({children.length})</p>
+                  <button
+                    type="button"
+                    onClick={addChild}
+                    className="flex items-center gap-1 text-[11px] font-bold text-[#C56B27] bg-white border border-[#E7DECE] px-2.5 py-1 rounded-lg hover:bg-amber-50"
+                  >
+                    <Plus className="w-3.5 h-3.5" /> Add Child
+                  </button>
+                </div>
+
+                {children.length === 0 ? (
+                  <p className="text-[11px] text-slate-400 italic py-1 text-center">
+                    No children added yet. Click "+ Add Child" above.
+                  </p>
+                ) : (
+                  children.map((child, index) => (
+                    <div key={index} className="p-2.5 bg-white border border-[#E7DECE] rounded-lg space-y-2 relative">
+                      <div className="flex justify-between items-center">
+                        <span className="text-[10px] font-bold text-slate-400 uppercase">Child #{index + 1}</span>
+                        <button
+                          type="button"
+                          onClick={() => removeChild(index)}
+                          className="text-red-500 hover:text-red-700 p-1"
+                          title="Remove child"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                      <div>
+                        <input
+                          type="text"
+                          required
+                          placeholder="Child's Full Name"
+                          value={child.name}
+                          onChange={(e) => updateChild(index, 'name', e.target.value)}
+                          className="w-full px-2.5 py-1 border rounded text-xs"
+                        />
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <input
+                          type="text"
+                          required
+                          placeholder="DOB or Age (e.g. 14)"
+                          value={child.age_dob}
+                          onChange={(e) => updateChild(index, 'age_dob', e.target.value)}
+                          className="w-full px-2.5 py-1 border rounded text-xs"
+                        />
+                        <input
+                          type="tel"
+                          placeholder="Phone (if applicable)"
+                          value={child.phone || ''}
+                          onChange={(e) => updateChild(index, 'phone', e.target.value)}
+                          className="w-full px-2.5 py-1 border rounded text-xs"
+                        />
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+
+              <button
+                type="submit"
+                className="w-full py-2.5 bg-gradient-to-r from-[#C56B27] to-[#781D26] text-white rounded-xl text-xs font-bold shadow hover:opacity-95"
+              >
+                Save Profile & Family Records
+              </button>
+            </form>
+          </div>
+        )}
+
+        {/* TAB 4: ADMIN / ORGANIZER DIRECTORY & CONSOLE */}
         {activeTab === 'admin' && (profile?.role === 'SUPER_ADMIN' || profile?.role === 'ORGANIZER') && (
           <div className="space-y-6">
             <div className="grid grid-cols-3 gap-2">
@@ -617,6 +851,7 @@ export default function App() {
               </div>
             </div>
 
+            {/* Event Management & Creator */}
             <div className="bg-white border border-[#E7DECE] rounded-2xl p-4 space-y-3">
               <div className="flex justify-between items-center">
                 <h3 className="font-serif font-bold text-slate-900 text-sm">Organizer Controls</h3>
@@ -625,13 +860,13 @@ export default function App() {
                     onClick={exportRsvpCSV}
                     className="flex items-center gap-1 px-2.5 py-1 bg-[#FAF6F0] hover:bg-slate-100 border border-[#E7DECE] rounded-lg text-[11px] font-semibold text-slate-700"
                   >
-                    <Download className="w-3 h-3" /> RSVP CSV
+                    <Download className="w-3.5 h-3.5" /> RSVP CSV
                   </button>
                   <button
                     onClick={exportAttendanceCSV}
                     className="flex items-center gap-1 px-2.5 py-1 bg-[#FAF6F0] hover:bg-slate-100 border border-[#E7DECE] rounded-lg text-[11px] font-semibold text-slate-700"
                   >
-                    <Download className="w-3 h-3" /> Check-In CSV
+                    <Download className="w-3.5 h-3.5" /> Check-In CSV
                   </button>
                 </div>
               </div>
@@ -707,7 +942,6 @@ export default function App() {
                       className="w-full mt-1 px-3 py-2 border rounded-lg text-xs focus:outline-none focus:border-[#C56B27]"
                     />
 
-                    {/* Pop-up options directly beneath as user types */}
                     {showAddressDropdown && addressSuggestions.length > 0 && (
                       <div className="absolute left-0 right-0 top-full mt-1 bg-white border border-[#E7DECE] rounded-xl shadow-xl z-30 max-h-52 overflow-y-auto divide-y divide-[#E7DECE]">
                         {addressSuggestions.map((item, idx) => (
@@ -747,6 +981,126 @@ export default function App() {
               )}
             </div>
 
+            {/* Devotee Directory: Super Admin (Full) vs Organizer (Read-Only Limited) */}
+            <div className="bg-white border border-[#E7DECE] rounded-2xl p-4">
+              <div className="flex justify-between items-center mb-1">
+                <h3 className="font-serif font-bold text-slate-900 text-sm">Devotee Directory & Family Records</h3>
+                <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-amber-100 text-[#C56B27]">
+                  {profile?.role === 'SUPER_ADMIN' ? 'Full Access' : 'Organizer Limited View'}
+                </span>
+              </div>
+              <p className="text-[11px] text-slate-500 mb-3">
+                {profile?.role === 'SUPER_ADMIN'
+                  ? 'Manage roles, view complete family records, and designate sponsors.'
+                  : 'Read-only directory of devotees with basic contact and family count.'}
+              </p>
+
+              <div className="space-y-3">
+                {allUsers.map((u) => {
+                  const userChildren: Child[] = Array.isArray(u.children) ? u.children : [];
+                  const isExpanded = expandedUser === u.id;
+
+                  return (
+                    <div key={u.id} className="p-3 bg-[#FAF6F0] border border-[#E7DECE] rounded-xl flex flex-col gap-2">
+                      <div className="flex justify-between items-start">
+                        <div>
+                          <p className="font-bold text-slate-900 text-xs flex items-center gap-1.5">
+                            {u.name}
+                            {u.role === 'SUPER_ADMIN' && <span className="text-[8px] bg-red-100 text-red-800 px-1 py-0.2 rounded font-bold">SUPER ADMIN</span>}
+                            {u.role === 'ORGANIZER' && <span className="text-[8px] bg-blue-100 text-blue-800 px-1 py-0.2 rounded font-bold">ORGANIZER</span>}
+                          </p>
+                          <p className="text-[11px] text-slate-500">{u.email}</p>
+                          {u.phone && <p className="text-[10px] text-slate-600">📞 {u.phone}</p>}
+                        </div>
+
+                        {profile?.role === 'SUPER_ADMIN' ? (
+                          <button
+                            onClick={() => handleToggleSponsor(u.id, u.sponsor_flag)}
+                            className={`px-2 py-1 rounded text-[10px] font-bold flex items-center gap-1 transition ${
+                              u.sponsor_flag
+                                ? 'bg-amber-100 text-amber-800 border border-amber-300'
+                                : 'bg-slate-200 text-slate-500'
+                            }`}
+                          >
+                            <Award className="w-3 h-3" />
+                            {u.sponsor_flag ? 'Sponsor' : 'Devotee'}
+                          </button>
+                        ) : (
+                          <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                            u.sponsor_flag ? 'bg-amber-100 text-amber-800' : 'bg-slate-200 text-slate-600'
+                          }`}>
+                            {u.sponsor_flag ? 'Sponsor' : 'Devotee'}
+                          </span>
+                        )}
+                      </div>
+
+                      {/* Organizer Limited View: Quick family summary */}
+                      {profile?.role === 'ORGANIZER' && (
+                        <div className="text-[11px] text-slate-600 pt-1 border-t border-[#E7DECE]/60 flex gap-3">
+                          <span>Spouse: <strong>{u.spouse_name || 'None listed'}</strong></span>
+                          <span>Children: <strong>{userChildren.length}</strong></span>
+                        </div>
+                      )}
+
+                      {/* Super Admin Full View: Expandable Family Breakdown */}
+                      {profile?.role === 'SUPER_ADMIN' && (
+                        <>
+                          <button
+                            onClick={() => setExpandedUser(isExpanded ? null : u.id)}
+                            className="text-[11px] font-semibold text-[#C56B27] flex items-center justify-between pt-1 border-t border-[#E7DECE]/60 hover:underline"
+                          >
+                            <span>Family Info ({u.spouse_name ? 'Spouse listed' : 'No spouse'}, {userChildren.length} children)</span>
+                            {isExpanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                          </button>
+
+                          {isExpanded && (
+                            <div className="p-2.5 bg-white border border-[#E7DECE] rounded-lg space-y-2 text-xs">
+                              <div>
+                                <span className="font-bold text-[#781D26]">Spouse:</span>{' '}
+                                {u.spouse_name ? (
+                                  <span>{u.spouse_name} {u.spouse_dob_age && `(Age/DOB: ${u.spouse_dob_age})`} {u.spouse_phone && `• 📞 ${u.spouse_phone}`}</span>
+                                ) : (
+                                  <span className="text-slate-400">Not provided</span>
+                                )}
+                              </div>
+                              <div>
+                                <span className="font-bold text-[#781D26]">Children ({userChildren.length}):</span>
+                                {userChildren.length === 0 ? (
+                                  <span className="text-slate-400 ml-1">None listed</span>
+                                ) : (
+                                  <ul className="list-disc pl-5 mt-1 space-y-0.5 text-slate-700">
+                                    {userChildren.map((c, i) => (
+                                      <li key={i}>
+                                        <strong>{c.name}</strong> - Age/DOB: {c.age_dob} {c.phone ? `(📞 ${c.phone})` : ''}
+                                      </li>
+                                    ))}
+                                  </ul>
+                                )}
+                              </div>
+                            </div>
+                          )}
+
+                          <div className="flex items-center justify-between pt-1">
+                            <span className="text-[10px] font-semibold text-slate-500 uppercase">Role Assignment</span>
+                            <select
+                              value={u.role}
+                              onChange={(e) => handleUpdateRole(u.id, e.target.value)}
+                              className="bg-white border border-slate-300 rounded px-2 py-1 text-xs font-semibold text-slate-700"
+                            >
+                              <option value="ATTENDEE">ATTENDEE</option>
+                              <option value="ORGANIZER">ORGANIZER</option>
+                              <option value="SUPER_ADMIN">SUPER_ADMIN</option>
+                            </select>
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Active QR Posters */}
             <div className="bg-white border border-[#E7DECE] rounded-2xl p-4">
               <h3 className="font-serif font-bold text-slate-900 text-sm mb-1">Active Assembly QR Codes</h3>
               <p className="text-[11px] text-slate-500 mb-3">Launch or print the entrance check-in poster for attendees.</p>
@@ -769,6 +1123,7 @@ export default function App() {
               </div>
             </div>
 
+            {/* RSVP Roster Section */}
             <div className="bg-white border border-[#E7DECE] rounded-2xl p-4">
               <h3 className="font-serif font-bold text-slate-900 text-sm mb-1">RSVP Roster</h3>
               <p className="text-[11px] text-slate-500 mb-3">Devotees who have submitted their attendance intention.</p>
@@ -793,50 +1148,6 @@ export default function App() {
                   ))}
                 </div>
               )}
-            </div>
-
-            <div className="bg-white border border-[#E7DECE] rounded-2xl p-4">
-              <h3 className="font-serif font-bold text-slate-900 text-sm mb-1">User Governance & Roles</h3>
-              <p className="text-[11px] text-slate-500 mb-3">Manage roles (Super Admin, Organizer, Attendee) and sponsors.</p>
-
-              <div className="space-y-3">
-                {allUsers.map((u) => (
-                  <div key={u.id} className="p-3 bg-[#FAF6F0] border border-[#E7DECE] rounded-xl flex flex-col gap-2">
-                    <div className="flex justify-between items-start">
-                      <div>
-                        <p className="font-bold text-slate-900 text-xs">{u.name}</p>
-                        <p className="text-[11px] text-slate-500">{u.email}</p>
-                      </div>
-                      <button
-                        disabled={profile?.role !== 'SUPER_ADMIN'}
-                        onClick={() => handleToggleSponsor(u.id, u.sponsor_flag)}
-                        className={`px-2 py-1 rounded text-[10px] font-bold flex items-center gap-1 transition ${
-                          u.sponsor_flag
-                            ? 'bg-amber-100 text-amber-800 border border-amber-300'
-                            : 'bg-slate-200 text-slate-500'
-                        }`}
-                      >
-                        <Award className="w-3 h-3" />
-                        {u.sponsor_flag ? 'Sponsor' : 'Devotee'}
-                      </button>
-                    </div>
-
-                    <div className="flex items-center justify-between pt-2 border-t border-[#E7DECE]/60">
-                      <span className="text-[10px] font-semibold text-slate-500 uppercase">Role</span>
-                      <select
-                        disabled={profile?.role !== 'SUPER_ADMIN'}
-                        value={u.role}
-                        onChange={(e) => handleUpdateRole(u.id, e.target.value)}
-                        className="bg-white border border-slate-300 rounded px-2 py-1 text-xs font-semibold text-slate-700"
-                      >
-                        <option value="ATTENDEE">ATTENDEE</option>
-                        <option value="ORGANIZER">ORGANIZER</option>
-                        <option value="SUPER_ADMIN">SUPER_ADMIN</option>
-                      </select>
-                    </div>
-                  </div>
-                ))}
-              </div>
             </div>
           </div>
         )}
@@ -897,6 +1208,7 @@ export default function App() {
         </div>
       )}
 
+      {/* Navigation Footer */}
       <footer className="fixed bottom-0 left-0 right-0 max-w-md mx-auto bg-white border-t border-[#E7DECE] flex justify-around py-3 z-20">
         <button
           onClick={() => setActiveTab('events')}
@@ -909,6 +1221,12 @@ export default function App() {
           className={`flex flex-col items-center text-xs ${activeTab === 'scan' ? 'text-[#C56B27] font-bold' : 'text-slate-400'}`}
         >
           <QrCode className="w-5 h-5 mb-0.5" /> Scan QR
+        </button>
+        <button
+          onClick={() => setActiveTab('profile')}
+          className={`flex flex-col items-center text-xs ${activeTab === 'profile' ? 'text-[#C56B27] font-bold' : 'text-slate-400'}`}
+        >
+          <User className="w-5 h-5 mb-0.5" /> Profile
         </button>
         {(profile?.role === 'SUPER_ADMIN' || profile?.role === 'ORGANIZER') && (
           <button
