@@ -58,15 +58,26 @@ export default function App() {
     return scannedText.trim();
   };
 
-  const executeCheckIn = async (token: string, tokenSession: any) => {
+  const executeCheckIn = async (token: string) => {
     setActiveTab('scan');
+
+    // Retrieve active session token directly from Supabase client
+    const { data: { session: freshSession } } = await supabase.auth.getSession();
+    const accessToken = freshSession?.access_token || session?.access_token;
+
+    if (!accessToken) {
+      setScanStatus({ error: 'Please sign in to complete check-in.' });
+      return;
+    }
+
     const performPost = async (lat?: number, lng?: number) => {
       try {
         const res = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/checkin`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            'Authorization': `Bearer ${tokenSession?.access_token}`,
+            'Authorization': `Bearer ${accessToken}`,
+            'apikey': import.meta.env.VITE_SUPABASE_ANON_KEY,
           },
           body: JSON.stringify({ qrSecretToken: token, userLat: lat, userLng: lng }),
         });
@@ -88,7 +99,6 @@ export default function App() {
       performPost();
     }
   };
-
   useEffect(() => {
     // 1. Check for token_hash (Email confirmation) or checkin (Camera scan) in URL
     const handleUrlParams = async (currentSession: any) => {
