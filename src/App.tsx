@@ -99,8 +99,8 @@ export default function App() {
       performPost();
     }
   };
+
   useEffect(() => {
-    // 1. Check for token_hash (Email confirmation) or checkin (Camera scan) in URL
     const handleUrlParams = async (currentSession: any) => {
       const params = new URLSearchParams(window.location.search);
       const token_hash = params.get('token_hash');
@@ -116,9 +116,12 @@ export default function App() {
       }
 
       if (checkinToken) {
-  window.history.replaceState({}, document.title, window.location.pathname);
-  executeCheckIn(checkinToken);
-}
+        window.history.replaceState({}, document.title, window.location.pathname);
+        if (currentSession) {
+          executeCheckIn(checkinToken);
+        }
+      }
+    };
 
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session);
