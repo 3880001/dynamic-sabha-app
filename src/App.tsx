@@ -1,9 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from './supabaseClient';
 import { Html5QrcodeScanner } from 'html5-qrcode';
+import QRCode from 'qrcode';
 import {
   Calendar, MapPin, QrCode, CheckCircle2, HeartHandshake, ShieldCheck,
-  UserCheck, LogOut, Sparkles, Users, Download, PlusCircle, Award, ListChecks
+  UserCheck, LogOut, Sparkles, Users, Download, PlusCircle, Award, ListChecks,
+  Printer, X, Navigation, LocateFixed
 } from 'lucide-react';
 
 export default function App() {
@@ -23,12 +25,25 @@ export default function App() {
   const [attendanceStats, setAttendanceStats] = useState<any[]>([]);
   const [rsvpStats, setRsvpStats] = useState<any[]>([]);
   const [showEventModal, setShowEventModal] = useState(false);
+  const [isGeocoding, setIsGeocoding] = useState(false);
+
+  // Active QR Poster Modal State
+  const [selectedEventForQR, setSelectedEventForQR] = useState<any | null>(null);
+  const [qrDataUrl, setQrDataUrl] = useState<string>('');
+
+  const generateRandomToken = () =>
+    `SABHA-${Math.random().toString(36).substring(2, 8).toUpperCase()}-${Date.now().toString().slice(-4)}`;
+
   const [newEvent, setNewEvent] = useState({
     title: '',
     date_time: '',
     venue: '',
+    address: '',
+    latitude: '' as string | number,
+    longitude: '' as string | number,
+    radius_meters: 300,
     sponsor_message: 'Thank you for your generous sponsorship and devoted support.',
-    qr_secret_token: `SABHA-${Date.now().toString().slice(-6)}`
+    qr_secret_token: generateRandomToken(),
   });
 
   useEffect(() => {
@@ -79,15 +94,12 @@ export default function App() {
   };
 
   const loadAdminData = async () => {
-    // 1. Fetch Users
     const { data: users } = await supabase.from('profiles').select('*').order('created_at', { ascending: false });
     if (users) setAllUsers(users);
 
-    // 2. Fetch Check-in Attendance
     const { data: attendance } = await supabase.from('attendance').select('*, profiles(name, email), events(title)');
     if (attendance) setAttendanceStats(attendance);
 
-    // 3. Fetch RSVPs with Profile and Event details
     const { data: rsvps } = await supabase.from('rsvp').select('*, profiles(name, email), events(title)').order('created_at', { ascending: false });
     if (rsvps) setRsvpStats(rsvps);
   };
@@ -100,7 +112,7 @@ export default function App() {
         password: authPassword,
         options: {
           data: { name: authName, role: 'ATTENDEE' },
-          emailRedirectTo: 'https://3880001.github.io/dynamic-sabha-app/'
+          emailRedirectTo: 'https://3880001.github.io/dynamic-sabha-app/',
         },
       });
       if (error) alert(error.message);
@@ -128,19 +140,118 @@ export default function App() {
     }
   };
 
+  // Free Geocoding: Look up Lat/Lng from Address via OpenStreetMap Nominatim
+  const handleGeocodeAddress = async () => {
+    if (!newEvent.address.trim()) {
+      alert('Please enter a street address first.');
+      return;
+    }
+    setIsGeocoding(true);
+    try {
+      const res = await fetch(
+        `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(newEvent.address)}`
+      );
+      const data = await res.json();
+      if (data && data.length > 0) {
+        setNewEvent((prev) => ({
+          ...prev,
+          latitude: parseFloat(data[0].lat),
+          longitude: parseFloat(data[0].lon),
+        }));
+        alert(`Location verified: Lat ${parseFloat(data[0].lat).toFixed(4)}, Lon ${parseFloat(data[0].lon).toFixed(4)}`);
+      } else {
+        alert('Could not find GPS coordinates for this address. Please ensure street name, city, and postal code are accurate.');
+      }
+    } catch (err) {
+      alert('Error fetching coordinates. You can enter current location instead.');
+    } finally {
+      setIsGeocoding(false);
+    }
+  };
+
+  // Helper to use Organizer's current location if currently at the venue
+  const handleUseCurrentLocation = () => {
+    if ('geolocation' in navigator) {
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          setNewEvent((prev) => ({
+            ...prev,
+            latitude: pos.coords.latitude,
+            longitude: pos.coords.longitude,
+          }));
+          alert('Current location set as venue coordinates.');
+        },
+        () => alert('Could not retrieve current location. Please grant browser permission.')
+      );
+    }
+  };
+
+  // Organizer: Create New Event
+  const handleCreateEvent = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newEvent.address.trim()) {
+      alert('Please provide the physical street address for the Sabha venue.');
+      return;
+    }
+
+    const tokenToSave = newEvent.qr_secret_token || generateRandomToken();
+
+    const { error } = await supabase.from('events').insert({
+      title: newEvent.title,
+      date_time: new Date(newEvent.date_time).toISOString(),
+      venue: newEvent.venue,
+      address: newEvent.address,
+      latitude: newEvent.latitude ? parseFloat(String(newEvent.latitude)) : null,
+      longitude: newEvent.longitude ? parseFloat(String(newEvent.longitude)) : null,
+      radius_meters: newEvent.radius_meters || 300,
+      sponsor_message: newEvent.sponsor_message,
+      qr_secret_token: tokenToSave,
+      created_by: session.user.id,
+    });
+
+    if (error) {
+      alert(error.message);
+    } else {
+      alert(`Event "${newEvent.title}" published!`);
+      setShowEventModal(false);
+      setNewEvent({
+        title: '',
+        date_time: '',
+        venue: '',
+        address: '',
+        latitude: '',
+        longitude: '',
+        radius_meters: 300,
+        sponsor_message: 'Thank you for your generous sponsorship and devoted support.',
+        qr_secret_token: generateRandomToken(),
+      });
+      loadEvents();
+    }
+  };
+
+  const openQRPoster = async (event: any) => {
+    setSelectedEventForQR(event);
+    try {
+      const url = await QRCode.toDataURL(event.qr_secret_token, {
+        width: 320,
+        margin: 2,
+        color: { dark: '#1E293B', light: '#FFFFFF' },
+      });
+      setQrDataUrl(url);
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
   const handleUpdateRole = async (targetUserId: string, newRole: string) => {
     if (profile?.role !== 'SUPER_ADMIN') {
       alert('Only Sabha Super Admins can reassign roles.');
       return;
     }
-    const { error } = await supabase
-      .from('profiles')
-      .update({ role: newRole })
-      .eq('id', targetUserId);
-
+    const { error } = await supabase.from('profiles').update({ role: newRole }).eq('id', targetUserId);
     if (error) alert(error.message);
     else {
-      setAllUsers((prev) => prev.map((u) => u.id === targetUserId ? { ...u, role: newRole } : u));
+      setAllUsers((prev) => prev.map((u) => (u.id === targetUserId ? { ...u, role: newRole } : u)));
       alert('User role updated successfully.');
     }
   };
@@ -150,37 +261,13 @@ export default function App() {
       alert('Only Sabha Super Admins can manage sponsor tags.');
       return;
     }
-    const { error } = await supabase
-      .from('profiles')
-      .update({ sponsor_flag: !currentStatus })
-      .eq('id', targetUserId);
-
+    const { error } = await supabase.from('profiles').update({ sponsor_flag: !currentStatus }).eq('id', targetUserId);
     if (error) alert(error.message);
     else {
-      setAllUsers((prev) => prev.map((u) => u.id === targetUserId ? { ...u, sponsor_flag: !currentStatus } : u));
+      setAllUsers((prev) => prev.map((u) => (u.id === targetUserId ? { ...u, sponsor_flag: !currentStatus } : u)));
     }
   };
 
-  const handleCreateEvent = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const { error } = await supabase.from('events').insert({
-      title: newEvent.title,
-      date_time: new Date(newEvent.date_time).toISOString(),
-      venue: newEvent.venue,
-      sponsor_message: newEvent.sponsor_message,
-      qr_secret_token: newEvent.qr_secret_token,
-      created_by: session.user.id
-    });
-
-    if (error) alert(error.message);
-    else {
-      alert(`Event "${newEvent.title}" published!`);
-      setShowEventModal(false);
-      loadEvents();
-    }
-  };
-
-  // CSV Report Generators
   const exportAttendanceCSV = () => {
     if (attendanceStats.length === 0) return alert('No attendance records found to export.');
     const headers = ['Devotee Name', 'Email', 'Event', 'Check-In Timestamp', 'Sponsor Attendance'];
@@ -189,7 +276,7 @@ export default function App() {
       `"${a.profiles?.email || ''}"`,
       `"${a.events?.title || ''}"`,
       `"${new Date(a.checkin_time).toLocaleString()}"`,
-      a.is_sponsor_checkin ? 'Yes' : 'No'
+      a.is_sponsor_checkin ? 'Yes' : 'No',
     ]);
     const csvContent = 'data:text/csv;charset=utf-8,' + [headers.join(','), ...rows.map((e) => e.join(','))].join('\n');
     downloadFile(csvContent, `sabha_attendance_${new Date().toISOString().slice(0, 10)}.csv`);
@@ -203,7 +290,7 @@ export default function App() {
       `"${r.profiles?.email || ''}"`,
       `"${r.events?.title || ''}"`,
       `"${r.status}"`,
-      `"${new Date(r.created_at).toLocaleString()}"`
+      `"${new Date(r.created_at).toLocaleString()}"`,
     ]);
     const csvContent = 'data:text/csv;charset=utf-8,' + [headers.join(','), ...rows.map((e) => e.join(','))].join('\n');
     downloadFile(csvContent, `sabha_rsvp_roster_${new Date().toISOString().slice(0, 10)}.csv`);
@@ -219,34 +306,50 @@ export default function App() {
     document.body.removeChild(link);
   };
 
-  // QR Scanner Lifecycle
+  // QR Scanner with Physical GPS Geofencing Check
   useEffect(() => {
     if (activeTab !== 'scan') return;
     const scanner = new Html5QrcodeScanner('qr-box', { fps: 10, qrbox: 250 }, false);
 
+    const submitCheckIn = async (qrSecretToken: string, userLat?: number, userLng?: number) => {
+      try {
+        const res = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/checkin`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${session?.access_token}`,
+          },
+          body: JSON.stringify({ qrSecretToken, userLat, userLng }),
+        });
+        const data = await res.json();
+        setScanStatus(data);
+        loadAdminData();
+      } catch (err: any) {
+        setScanStatus({ error: 'Network error checking in.' });
+      }
+    };
+
     scanner.render(
-      async (decodedText) => {
+      (decodedText) => {
         scanner.clear();
-        try {
-          const res = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/checkin`, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'Authorization': `Bearer ${session?.access_token}`,
+        if ('geolocation' in navigator) {
+          navigator.geolocation.getCurrentPosition(
+            (pos) => {
+              submitCheckIn(decodedText, pos.coords.latitude, pos.coords.longitude);
             },
-            body: JSON.stringify({ qrSecretToken: decodedText }),
-          });
-          const data = await res.json();
-          setScanStatus(data);
-          loadAdminData();
-        } catch (err: any) {
-          setScanStatus({ error: 'Network error checking in.' });
+            () => submitCheckIn(decodedText),
+            { enableHighAccuracy: true, timeout: 7000 }
+          );
+        } else {
+          submitCheckIn(decodedText);
         }
       },
       () => {}
     );
 
-    return () => { scanner.clear().catch(() => {}); };
+    return () => {
+      scanner.clear().catch(() => {});
+    };
   }, [activeTab]);
 
   if (!session) {
@@ -353,7 +456,7 @@ export default function App() {
         </button>
       </header>
 
-      {/* Main Tabs */}
+      {/* Main Container */}
       <main className="p-4">
         {/* TAB 1: SABHA EVENTS FEED */}
         {activeTab === 'events' && (
@@ -374,21 +477,47 @@ export default function App() {
                 <div key={ev.event_id} className="bg-white border border-[#E7DECE] rounded-2xl p-4 shadow-sm">
                   <div className="flex justify-between items-start">
                     <h3 className="font-serif font-bold text-lg text-slate-900">{ev.title}</h3>
-                    <span className="text-[10px] font-mono bg-slate-100 text-slate-600 px-2 py-0.5 rounded">
-                      QR: {ev.qr_secret_token}
-                    </span>
+                    {(profile?.role === 'SUPER_ADMIN' || profile?.role === 'ORGANIZER') && (
+                      <button
+                        onClick={() => openQRPoster(ev)}
+                        className="flex items-center gap-1 bg-amber-50 hover:bg-amber-100 border border-amber-300 text-[#C56B27] px-2.5 py-1 rounded-lg text-xs font-bold transition"
+                        title="Display Entrance QR Code"
+                      >
+                        <QrCode className="w-3.5 h-3.5" /> Entrance QR
+                      </button>
+                    )}
                   </div>
-                  <div className="mt-2 space-y-1">
-                    <p className="text-xs text-slate-600 flex items-center gap-1.5">
-                      <Calendar className="w-4 h-4 text-[#C56B27]" />
+
+                  <div className="mt-2.5 space-y-1.5">
+                    <p className="text-xs text-slate-700 flex items-center gap-1.5">
+                      <Calendar className="w-4 h-4 text-[#C56B27] shrink-0" />
                       {new Date(ev.date_time).toLocaleDateString([], {
-                        weekday: 'long', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'
+                        weekday: 'long',
+                        month: 'short',
+                        day: 'numeric',
+                        hour: '2-digit',
+                        minute: '2-digit',
                       })}
                     </p>
-                    <p className="text-xs text-slate-600 flex items-center gap-1.5">
-                      <MapPin className="w-4 h-4 text-[#C56B27]" /> {ev.venue}
+                    <p className="text-xs font-semibold text-slate-900 flex items-center gap-1.5">
+                      <MapPin className="w-4 h-4 text-[#C56B27] shrink-0" />
+                      {ev.venue}
                     </p>
+                    {ev.address && (
+                      <div className="pl-5 flex items-start justify-between gap-2">
+                        <p className="text-[11px] text-slate-500 leading-snug">{ev.address}</p>
+                        <a
+                          href={`https://maps.google.com/?q=${encodeURIComponent(`${ev.venue}, ${ev.address}`)}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="shrink-0 flex items-center gap-1 text-[10px] text-[#C56B27] hover:underline font-bold"
+                        >
+                          <Navigation className="w-3 h-3" /> Directions
+                        </a>
+                      </div>
+                    )}
                   </div>
+
                   <div className="mt-4 pt-3 border-t border-[#F2ECE1] flex justify-between items-center">
                     <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">RSVP</span>
                     <div className="flex gap-1.5">
@@ -409,20 +538,23 @@ export default function App() {
           </div>
         )}
 
-        {/* TAB 2: QR CHECK-IN */}
+        {/* TAB 2: ATTENDEE QR SCANNER */}
         {activeTab === 'scan' && (
           <div className="bg-white border border-[#E7DECE] rounded-3xl p-6 text-center shadow-sm">
             <h2 className="text-xl font-serif font-bold text-[#781D26] mb-1">Entrance Check-In</h2>
-            <p className="text-xs text-slate-500 mb-4">Point your camera at the entrance QR code poster.</p>
+            <p className="text-xs text-slate-500 mb-4">Point your camera at the entrance QR poster at the venue.</p>
 
             {!scanStatus ? (
               <div id="qr-box" className="w-full max-w-xs mx-auto overflow-hidden rounded-2xl border-2 border-[#E7DECE] bg-black" />
             ) : scanStatus.error ? (
-              <div className="p-4 bg-red-50 border border-red-200 rounded-2xl text-red-700">
-                <p className="font-bold text-sm">Check-in Error</p>
-                <p className="text-xs mt-1">{scanStatus.error}</p>
-                <button onClick={() => setScanStatus(null)} className="mt-4 px-4 py-1.5 bg-red-600 text-white text-xs font-semibold rounded-lg">
-                  Scan Again
+              <div className="p-4 bg-red-50 border border-red-200 rounded-2xl text-red-700 text-left">
+                <p className="font-bold text-sm">Check-in Rejected</p>
+                <p className="text-xs mt-1 leading-relaxed">{scanStatus.error}</p>
+                <button
+                  onClick={() => setScanStatus(null)}
+                  className="mt-4 w-full py-2 bg-red-600 text-white text-xs font-semibold rounded-lg"
+                >
+                  Try Again
                 </button>
               </div>
             ) : (
@@ -458,7 +590,6 @@ export default function App() {
         {/* TAB 3: ADMIN & ORGANIZER CONSOLE */}
         {activeTab === 'admin' && (profile?.role === 'SUPER_ADMIN' || profile?.role === 'ORGANIZER') && (
           <div className="space-y-6">
-            {/* Quick Metrics: Confirmed RSVPs vs Live Scanned Check-ins */}
             <div className="grid grid-cols-3 gap-2">
               <div className="bg-white border border-[#E7DECE] rounded-2xl p-3 text-center">
                 <Users className="w-4 h-4 text-slate-500 mx-auto mb-1" />
@@ -477,7 +608,7 @@ export default function App() {
               </div>
             </div>
 
-            {/* Event Management & CSV Actions */}
+            {/* Event Management & Creator */}
             <div className="bg-white border border-[#E7DECE] rounded-2xl p-4 space-y-3">
               <div className="flex justify-between items-center">
                 <h3 className="font-serif font-bold text-slate-900 text-sm">Organizer Controls</h3>
@@ -485,21 +616,23 @@ export default function App() {
                   <button
                     onClick={exportRsvpCSV}
                     className="flex items-center gap-1 px-2.5 py-1 bg-[#FAF6F0] hover:bg-slate-100 border border-[#E7DECE] rounded-lg text-[11px] font-semibold text-slate-700"
-                    title="Export RSVP List"
                   >
                     <Download className="w-3 h-3" /> RSVP CSV
                   </button>
                   <button
                     onClick={exportAttendanceCSV}
                     className="flex items-center gap-1 px-2.5 py-1 bg-[#FAF6F0] hover:bg-slate-100 border border-[#E7DECE] rounded-lg text-[11px] font-semibold text-slate-700"
-                    title="Export Check-in List"
                   >
                     <Download className="w-3 h-3" /> Check-In CSV
                   </button>
                 </div>
               </div>
+
               <button
-                onClick={() => setShowEventModal(!showEventModal)}
+                onClick={() => {
+                  setNewEvent({ ...newEvent, qr_secret_token: generateRandomToken() });
+                  setShowEventModal(!showEventModal);
+                }}
                 className="w-full flex items-center justify-center gap-2 py-2.5 bg-gradient-to-r from-[#C56B27] to-[#781D26] text-white rounded-xl text-xs font-bold shadow"
               >
                 <PlusCircle className="w-4 h-4" /> Schedule New Sabha Event
@@ -513,12 +646,13 @@ export default function App() {
                     <input
                       type="text"
                       required
-                      placeholder="e.g. Sunday Youth Sabha"
+                      placeholder="e.g. Sunday Satsang Sabha"
                       value={newEvent.title}
                       onChange={(e) => setNewEvent({ ...newEvent, title: e.target.value })}
                       className="w-full mt-1 px-3 py-2 border rounded-lg text-xs"
                     />
                   </div>
+
                   <div>
                     <label className="text-[11px] font-bold text-slate-600 uppercase">Date & Time</label>
                     <input
@@ -529,19 +663,73 @@ export default function App() {
                       className="w-full mt-1 px-3 py-2 border rounded-lg text-xs"
                     />
                   </div>
+
                   <div>
-                    <label className="text-[11px] font-bold text-slate-600 uppercase">Mandir / Venue</label>
+                    <label className="text-[11px] font-bold text-slate-600 uppercase">Venue Name / Hall</label>
                     <input
                       type="text"
                       required
-                      placeholder="e.g. Haveli Assembly Hall"
+                      placeholder="e.g. Main Assembly Hall"
                       value={newEvent.venue}
                       onChange={(e) => setNewEvent({ ...newEvent, venue: e.target.value })}
                       className="w-full mt-1 px-3 py-2 border rounded-lg text-xs"
                     />
                   </div>
+
+                  {/* Physical Address & Geotagging */}
                   <div>
-                    <label className="text-[11px] font-bold text-slate-600 uppercase">Sponsor Custom Gratitude Message</label>
+                    <div className="flex justify-between items-center">
+                      <label className="text-[11px] font-bold text-slate-600 uppercase">Physical Street Address</label>
+                      <button
+                        type="button"
+                        onClick={handleGeocodeAddress}
+                        disabled={isGeocoding}
+                        className="text-[10px] text-[#C56B27] font-bold hover:underline"
+                      >
+                        {isGeocoding ? 'Looking up...' : 'Verify Address GPS'}
+                      </button>
+                    </div>
+                    <input
+                      type="text"
+                      required
+                      placeholder="e.g. 61 Claireville Dr, Etobicoke, ON M9W 5Z7"
+                      value={newEvent.address}
+                      onChange={(e) => setNewEvent({ ...newEvent, address: e.target.value })}
+                      className="w-full mt-1 px-3 py-2 border rounded-lg text-xs"
+                    />
+                  </div>
+
+                  {/* Geofence Coordinates Container */}
+                  <div className="p-3 bg-[#FAF6F0] border border-[#E7DECE] rounded-xl space-y-2">
+                    <div className="flex justify-between items-center">
+                      <span className="text-[10px] font-bold text-slate-700 uppercase">Physical Geofencing</span>
+                      <button
+                        type="button"
+                        onClick={handleUseCurrentLocation}
+                        className="flex items-center gap-1 text-[10px] text-[#C56B27] font-bold"
+                      >
+                        <LocateFixed className="w-3 h-3" /> Set from Current GPS
+                      </button>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2 text-[10px] font-mono text-slate-600">
+                      <div>Lat: {newEvent.latitude || 'Not set'}</div>
+                      <div>Lon: {newEvent.longitude || 'Not set'}</div>
+                    </div>
+                    <div>
+                      <label className="text-[10px] font-semibold text-slate-500">Allowed Scan Radius (Meters)</label>
+                      <input
+                        type="number"
+                        min="100"
+                        max="2000"
+                        value={newEvent.radius_meters}
+                        onChange={(e) => setNewEvent({ ...newEvent, radius_meters: parseInt(e.target.value) || 300 })}
+                        className="w-full mt-0.5 px-2 py-1 border rounded text-xs bg-white"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="text-[11px] font-bold text-slate-600 uppercase">Sponsor Gratitude Note</label>
                     <textarea
                       rows={2}
                       value={newEvent.sponsor_message}
@@ -549,11 +737,40 @@ export default function App() {
                       className="w-full mt-1 px-3 py-2 border rounded-lg text-xs"
                     />
                   </div>
+
+                  <div className="p-2.5 bg-amber-50 border border-amber-200 rounded-lg">
+                    <p className="text-[10px] uppercase font-bold text-amber-800">Auto-Generated QR Token</p>
+                    <p className="text-xs font-mono font-bold text-slate-800 mt-0.5">{newEvent.qr_secret_token}</p>
+                  </div>
+
                   <button type="submit" className="w-full py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold">
-                    Publish Sabha
+                    Publish Sabha & Enable Geo-Protection
                   </button>
                 </form>
               )}
+            </div>
+
+            {/* List of Scheduled Events with Entrance QR Launcher */}
+            <div className="bg-white border border-[#E7DECE] rounded-2xl p-4">
+              <h3 className="font-serif font-bold text-slate-900 text-sm mb-1">Active Assembly QR Codes</h3>
+              <p className="text-[11px] text-slate-500 mb-3">Launch or print the entrance check-in poster for attendees.</p>
+
+              <div className="space-y-2">
+                {events.map((ev) => (
+                  <div key={ev.event_id} className="p-3 bg-[#FAF6F0] border border-[#E7DECE] rounded-xl flex justify-between items-center">
+                    <div>
+                      <p className="font-bold text-slate-900 text-xs">{ev.title}</p>
+                      <p className="text-[10px] text-slate-500">{ev.address || ev.venue}</p>
+                    </div>
+                    <button
+                      onClick={() => openQRPoster(ev)}
+                      className="flex items-center gap-1.5 bg-[#C56B27] hover:bg-[#781D26] text-white px-3 py-1.5 rounded-lg text-xs font-bold transition shadow-sm"
+                    >
+                      <QrCode className="w-3.5 h-3.5" /> Launch QR
+                    </button>
+                  </div>
+                ))}
+              </div>
             </div>
 
             {/* RSVP Roster Section */}
@@ -583,12 +800,10 @@ export default function App() {
               )}
             </div>
 
-            {/* User Roles & Sponsor Governance Table */}
+            {/* User Roles & Sponsor Governance */}
             <div className="bg-white border border-[#E7DECE] rounded-2xl p-4">
               <h3 className="font-serif font-bold text-slate-900 text-sm mb-1">User Governance & Roles</h3>
-              <p className="text-[11px] text-slate-500 mb-3">
-                Manage roles (Super Admin, Organizer, Attendee) and designate sponsors.
-              </p>
+              <p className="text-[11px] text-slate-500 mb-3">Manage roles (Super Admin, Organizer, Attendee) and sponsors.</p>
 
               <div className="space-y-3">
                 {allUsers.map((u) => (
@@ -606,7 +821,6 @@ export default function App() {
                             ? 'bg-amber-100 text-amber-800 border border-amber-300'
                             : 'bg-slate-200 text-slate-500'
                         }`}
-                        title="Click to toggle sponsor"
                       >
                         <Award className="w-3 h-3" />
                         {u.sponsor_flag ? 'Sponsor' : 'Devotee'}
@@ -633,6 +847,61 @@ export default function App() {
           </div>
         )}
       </main>
+
+      {/* ENTRANCE QR POSTER MODAL */}
+      {selectedEventForQR && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-[#FAF6F0] border-2 border-[#C56B27] rounded-3xl p-6 w-full max-w-sm text-center shadow-2xl relative">
+            <button
+              onClick={() => setSelectedEventForQR(null)}
+              className="absolute top-4 right-4 p-2 bg-slate-200 hover:bg-slate-300 rounded-full text-slate-700"
+            >
+              <X className="w-4 h-4" />
+            </button>
+
+            <div className="w-12 h-12 mx-auto mb-2 rounded-full bg-gradient-to-tr from-[#781D26] to-[#C56B27] flex items-center justify-center text-white shadow">
+              <Sparkles className="w-6 h-6 text-amber-200" />
+            </div>
+
+            <p className="text-[10px] font-bold uppercase tracking-wider text-[#C56B27]">BAPS Swaminarayan Sanstha</p>
+            <h2 className="text-xl font-serif font-black text-[#781D26] mt-0.5">{selectedEventForQR.title}</h2>
+            <p className="text-xs font-bold text-slate-800 mt-1">{selectedEventForQR.venue}</p>
+            {selectedEventForQR.address && (
+              <p className="text-[11px] text-slate-500 mt-0.5 px-4">{selectedEventForQR.address}</p>
+            )}
+
+            <div className="my-4 p-4 bg-white border border-[#E7DECE] rounded-2xl shadow-inner inline-block">
+              {qrDataUrl ? (
+                <img src={qrDataUrl} alt="Entrance QR Code" className="w-52 h-52 mx-auto" />
+              ) : (
+                <div className="w-52 h-52 flex items-center justify-center text-xs text-slate-400">Generating QR...</div>
+              )}
+            </div>
+
+            <p className="text-xs font-serif font-bold text-slate-800">
+              Scan with your phone to mark Sabha attendance
+            </p>
+            <p className="text-[10px] font-mono text-slate-400 mt-1">
+              Token: {selectedEventForQR.qr_secret_token}
+            </p>
+
+            <div className="mt-5 flex gap-2">
+              <button
+                onClick={() => window.print()}
+                className="flex-1 flex items-center justify-center gap-1.5 py-2.5 bg-gradient-to-r from-[#C56B27] to-[#781D26] text-white rounded-xl text-xs font-bold shadow"
+              >
+                <Printer className="w-4 h-4" /> Print Poster
+              </button>
+              <button
+                onClick={() => setSelectedEventForQR(null)}
+                className="px-4 py-2.5 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-xl text-xs font-bold"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Navigation Footer */}
       <footer className="fixed bottom-0 left-0 right-0 max-w-md mx-auto bg-white border-t border-[#E7DECE] flex justify-around py-3 z-20">
