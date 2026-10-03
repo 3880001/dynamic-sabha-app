@@ -3,7 +3,7 @@ import { supabase } from './supabaseClient';
 import { Html5QrcodeScanner } from 'html5-qrcode';
 import {
   Calendar, MapPin, QrCode, CheckCircle2, HeartHandshake, ShieldCheck,
-  UserCheck, LogOut, Sparkles, Users, Download, PlusCircle, Award
+  UserCheck, LogOut, Sparkles, Users, Download, PlusCircle, Award, ListChecks
 } from 'lucide-react';
 
 export default function App() {
@@ -21,6 +21,7 @@ export default function App() {
   // Admin & Management State
   const [allUsers, setAllUsers] = useState<any[]>([]);
   const [attendanceStats, setAttendanceStats] = useState<any[]>([]);
+  const [rsvpStats, setRsvpStats] = useState<any[]>([]);
   const [showEventModal, setShowEventModal] = useState(false);
   const [newEvent, setNewEvent] = useState({
     title: '',
@@ -78,11 +79,17 @@ export default function App() {
   };
 
   const loadAdminData = async () => {
+    // 1. Fetch Users
     const { data: users } = await supabase.from('profiles').select('*').order('created_at', { ascending: false });
     if (users) setAllUsers(users);
 
+    // 2. Fetch Check-in Attendance
     const { data: attendance } = await supabase.from('attendance').select('*, profiles(name, email), events(title)');
     if (attendance) setAttendanceStats(attendance);
+
+    // 3. Fetch RSVPs with Profile and Event details
+    const { data: rsvps } = await supabase.from('rsvp').select('*, profiles(name, email), events(title)').order('created_at', { ascending: false });
+    if (rsvps) setRsvpStats(rsvps);
   };
 
   const handleAuth = async (e: React.FormEvent) => {
@@ -115,10 +122,12 @@ export default function App() {
       status,
     });
     if (error) alert(error.message);
-    else alert(`RSVP recorded: ${status}`);
+    else {
+      alert(`RSVP recorded: ${status}`);
+      loadAdminData();
+    }
   };
 
-  // Super Admin: Change User Role (ATTENDEE / ORGANIZER / SUPER_ADMIN)
   const handleUpdateRole = async (targetUserId: string, newRole: string) => {
     if (profile?.role !== 'SUPER_ADMIN') {
       alert('Only Sabha Super Admins can reassign roles.');
@@ -136,7 +145,6 @@ export default function App() {
     }
   };
 
-  // Super Admin: Toggle Sponsor Recognition
   const handleToggleSponsor = async (targetUserId: string, currentStatus: boolean) => {
     if (profile?.role !== 'SUPER_ADMIN') {
       alert('Only Sabha Super Admins can manage sponsor tags.');
@@ -153,7 +161,6 @@ export default function App() {
     }
   };
 
-  // Organizer / Admin: Create New Sabha Event
   const handleCreateEvent = async (e: React.FormEvent) => {
     e.preventDefault();
     const { error } = await supabase.from('events').insert({
@@ -173,7 +180,7 @@ export default function App() {
     }
   };
 
-  // CSV Report Generator
+  // CSV Report Generators
   const exportAttendanceCSV = () => {
     if (attendanceStats.length === 0) return alert('No attendance records found to export.');
     const headers = ['Devotee Name', 'Email', 'Event', 'Check-In Timestamp', 'Sponsor Attendance'];
@@ -185,10 +192,28 @@ export default function App() {
       a.is_sponsor_checkin ? 'Yes' : 'No'
     ]);
     const csvContent = 'data:text/csv;charset=utf-8,' + [headers.join(','), ...rows.map((e) => e.join(','))].join('\n');
-    const encodedUri = encodeURI(csvContent);
+    downloadFile(csvContent, `sabha_attendance_${new Date().toISOString().slice(0, 10)}.csv`);
+  };
+
+  const exportRsvpCSV = () => {
+    if (rsvpStats.length === 0) return alert('No RSVP records found to export.');
+    const headers = ['Devotee Name', 'Email', 'Event', 'RSVP Status', 'Submitted At'];
+    const rows = rsvpStats.map((r) => [
+      `"${r.profiles?.name || ''}"`,
+      `"${r.profiles?.email || ''}"`,
+      `"${r.events?.title || ''}"`,
+      `"${r.status}"`,
+      `"${new Date(r.created_at).toLocaleString()}"`
+    ]);
+    const csvContent = 'data:text/csv;charset=utf-8,' + [headers.join(','), ...rows.map((e) => e.join(','))].join('\n');
+    downloadFile(csvContent, `sabha_rsvp_roster_${new Date().toISOString().slice(0, 10)}.csv`);
+  };
+
+  const downloadFile = (content: string, filename: string) => {
+    const encodedUri = encodeURI(content);
     const link = document.createElement('a');
     link.setAttribute('href', encodedUri);
-    link.setAttribute('download', `sabha_attendance_${new Date().toISOString().slice(0, 10)}.csv`);
+    link.setAttribute('download', filename);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -295,6 +320,8 @@ export default function App() {
       </div>
     );
   }
+
+  const confirmedRsvpsCount = rsvpStats.filter((r) => r.status === 'Yes').length;
 
   return (
     <div className="max-w-md mx-auto min-h-screen bg-[#FAF6F0] pb-24">
@@ -428,20 +455,25 @@ export default function App() {
           </div>
         )}
 
-        {/* TAB 3: ROLES, GOVERNANCE & ORGANIZER CONSOLE */}
+        {/* TAB 3: ADMIN & ORGANIZER CONSOLE */}
         {activeTab === 'admin' && (profile?.role === 'SUPER_ADMIN' || profile?.role === 'ORGANIZER') && (
           <div className="space-y-6">
-            {/* Quick Metrics */}
-            <div className="grid grid-cols-2 gap-3">
-              <div className="bg-white border border-[#E7DECE] rounded-2xl p-4 text-center">
-                <Users className="w-5 h-5 text-[#C56B27] mx-auto mb-1" />
-                <p className="text-[10px] font-bold uppercase text-slate-400">Total Devotees</p>
-                <p className="text-2xl font-black text-slate-800">{allUsers.length}</p>
+            {/* Quick Metrics: Confirmed RSVPs vs Live Scanned Check-ins */}
+            <div className="grid grid-cols-3 gap-2">
+              <div className="bg-white border border-[#E7DECE] rounded-2xl p-3 text-center">
+                <Users className="w-4 h-4 text-slate-500 mx-auto mb-1" />
+                <p className="text-[9px] font-bold uppercase text-slate-400">Registered</p>
+                <p className="text-xl font-black text-slate-800">{allUsers.length}</p>
               </div>
-              <div className="bg-white border border-[#E7DECE] rounded-2xl p-4 text-center">
-                <CheckCircle2 className="w-5 h-5 text-emerald-600 mx-auto mb-1" />
-                <p className="text-[10px] font-bold uppercase text-slate-400">Live Check-Ins</p>
-                <p className="text-2xl font-black text-emerald-700">{attendanceStats.length}</p>
+              <div className="bg-white border border-[#E7DECE] rounded-2xl p-3 text-center">
+                <ListChecks className="w-4 h-4 text-blue-600 mx-auto mb-1" />
+                <p className="text-[9px] font-bold uppercase text-blue-600">RSVP Yes</p>
+                <p className="text-xl font-black text-blue-700">{confirmedRsvpsCount}</p>
+              </div>
+              <div className="bg-white border border-[#E7DECE] rounded-2xl p-3 text-center">
+                <CheckCircle2 className="w-4 h-4 text-emerald-600 mx-auto mb-1" />
+                <p className="text-[9px] font-bold uppercase text-emerald-600">Live Scanned</p>
+                <p className="text-xl font-black text-emerald-700">{attendanceStats.length}</p>
               </div>
             </div>
 
@@ -449,12 +481,22 @@ export default function App() {
             <div className="bg-white border border-[#E7DECE] rounded-2xl p-4 space-y-3">
               <div className="flex justify-between items-center">
                 <h3 className="font-serif font-bold text-slate-900 text-sm">Organizer Controls</h3>
-                <button
-                  onClick={exportAttendanceCSV}
-                  className="flex items-center gap-1.5 px-3 py-1.5 bg-[#FAF6F0] hover:bg-slate-100 border border-[#E7DECE] rounded-lg text-xs font-semibold text-slate-700"
-                >
-                  <Download className="w-3.5 h-3.5" /> Export CSV
-                </button>
+                <div className="flex gap-1.5">
+                  <button
+                    onClick={exportRsvpCSV}
+                    className="flex items-center gap-1 px-2.5 py-1 bg-[#FAF6F0] hover:bg-slate-100 border border-[#E7DECE] rounded-lg text-[11px] font-semibold text-slate-700"
+                    title="Export RSVP List"
+                  >
+                    <Download className="w-3 h-3" /> RSVP CSV
+                  </button>
+                  <button
+                    onClick={exportAttendanceCSV}
+                    className="flex items-center gap-1 px-2.5 py-1 bg-[#FAF6F0] hover:bg-slate-100 border border-[#E7DECE] rounded-lg text-[11px] font-semibold text-slate-700"
+                    title="Export Check-in List"
+                  >
+                    <Download className="w-3 h-3" /> Check-In CSV
+                  </button>
+                </div>
               </div>
               <button
                 onClick={() => setShowEventModal(!showEventModal)}
@@ -511,6 +553,33 @@ export default function App() {
                     Publish Sabha
                   </button>
                 </form>
+              )}
+            </div>
+
+            {/* RSVP Roster Section */}
+            <div className="bg-white border border-[#E7DECE] rounded-2xl p-4">
+              <h3 className="font-serif font-bold text-slate-900 text-sm mb-1">RSVP Roster</h3>
+              <p className="text-[11px] text-slate-500 mb-3">Devotees who have submitted their attendance intention.</p>
+
+              {rsvpStats.length === 0 ? (
+                <p className="text-xs text-slate-400 py-3 text-center">No RSVP submissions recorded yet.</p>
+              ) : (
+                <div className="space-y-2">
+                  {rsvpStats.map((r) => (
+                    <div key={r.rsvp_id} className="p-2.5 bg-[#FAF6F0] border border-[#E7DECE] rounded-xl flex justify-between items-center text-xs">
+                      <div>
+                        <p className="font-bold text-slate-900">{r.profiles?.name || 'Devotee'}</p>
+                        <p className="text-[10px] text-slate-500">{r.events?.title}</p>
+                      </div>
+                      <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                        r.status === 'Yes' ? 'bg-emerald-100 text-emerald-800' :
+                        r.status === 'Maybe' ? 'bg-amber-100 text-amber-800' : 'bg-slate-200 text-slate-600'
+                      }`}>
+                        {r.status}
+                      </span>
+                    </div>
+                  ))}
+                </div>
               )}
             </div>
 
