@@ -5,7 +5,7 @@ import {
   Calendar, MapPin, QrCode, CheckCircle2, HeartHandshake, ShieldCheck,
   UserCheck, LogOut, Sparkles, Users, Download, PlusCircle, Award, ListChecks,
   Printer, X, Navigation, Check, Loader2, User, Plus, Trash2, ChevronDown, ChevronUp,
-  MessageSquare
+  MessageSquare, Image as ImageIcon, UploadCloud
 } from 'lucide-react';
 
 interface Child {
@@ -47,6 +47,11 @@ export default function App() {
   const [rsvpAdultCount, setRsvpAdultCount] = useState<number>(1);
   const [rsvpChildCount, setRsvpChildCount] = useState<number>(0);
   const [rsvpRemarks, setRsvpRemarks] = useState<string>('');
+
+  // Flyer Viewer Modal State
+  const [selectedFlyerUrl, setSelectedFlyerUrl] = useState<string | null>(null);
+  const [flyerFile, setFlyerFile] = useState<File | null>(null);
+  const [isUploadingFlyer, setIsUploadingFlyer] = useState(false);
 
   // Live Address Autocomplete State
   const [addressSuggestions, setAddressSuggestions] = useState<any[]>([]);
@@ -212,7 +217,6 @@ export default function App() {
     }
   };
 
-  // RSVP Button Click: "Yes" requires form submission; "Maybe" & "No" submit directly
   const handleRSVPClick = async (event: any, status: 'Yes' | 'No' | 'Maybe') => {
     if (!session) return;
     if (status === 'Yes') {
@@ -237,7 +241,6 @@ export default function App() {
     }
   };
 
-  // Submit Completed "Yes" RSVP
   const handleSubmitYesRSVP = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!session || !rsvpModalEvent) return;
@@ -265,7 +268,6 @@ export default function App() {
     }
   };
 
-  // Profile Save
   const handleSaveProfile = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!session) return;
@@ -354,8 +356,34 @@ export default function App() {
     setShowAddressDropdown(false);
   };
 
+  // Event Creation with Flyer Upload
   const handleCreateEvent = async (e: React.FormEvent) => {
     e.preventDefault();
+    setIsUploadingFlyer(true);
+
+    let uploadedFlyerUrl: string | null = null;
+
+    if (flyerFile) {
+      const fileExt = flyerFile.name.split('.').pop();
+      const fileName = `flyer_${Date.now()}_${Math.random().toString(36).substring(2, 7)}.${fileExt}`;
+
+      const { data: uploadData, error: uploadErr } = await supabase.storage
+        .from('event-flyers')
+        .upload(fileName, flyerFile, { cacheControl: '3600', upsert: false });
+
+      if (uploadErr) {
+        alert(`Flyer upload failed: ${uploadErr.message}`);
+        setIsUploadingFlyer(false);
+        return;
+      }
+
+      const { data: publicUrlData } = supabase.storage
+        .from('event-flyers')
+        .getPublicUrl(uploadData.path);
+
+      uploadedFlyerUrl = publicUrlData.publicUrl;
+    }
+
     const tokenToSave = newEvent.qr_secret_token || generateRandomToken();
 
     const { error } = await supabase.from('events').insert({
@@ -365,14 +393,18 @@ export default function App() {
       address: newEvent.address,
       sponsor_message: newEvent.sponsor_message,
       qr_secret_token: tokenToSave,
+      flyer_url: uploadedFlyerUrl,
       created_by: session.user.id,
     });
+
+    setIsUploadingFlyer(false);
 
     if (error) {
       alert(error.message);
     } else {
       alert(`Event "${newEvent.title}" published with entrance QR code!`);
       setShowEventModal(false);
+      setFlyerFile(null);
       setAddressSuggestions([]);
       setNewEvent({
         title: '',
@@ -550,7 +582,6 @@ export default function App() {
     );
   }
 
-  // Calculate total devotees declared across all "Yes" RSVPs
   const confirmedYesRsvps = rsvpStats.filter((r) => r.status === 'Yes');
   const totalHeadcount = confirmedYesRsvps.reduce(
     (sum, r) => sum + (Number(r.adult_count) || 1) + (Number(r.child_count) || 0),
@@ -559,6 +590,7 @@ export default function App() {
 
   return (
     <div className="max-w-md mx-auto min-h-screen bg-[#FAF6F0] pb-24">
+      {/* Header */}
       <header className="bg-white border-b border-[#E7DECE] px-4 py-3 flex justify-between items-center sticky top-0 z-10">
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 rounded-full bg-gradient-to-br from-[#781D26] to-[#C56B27] flex items-center justify-center text-white">
@@ -603,13 +635,28 @@ export default function App() {
               </div>
             ) : (
               events.map((ev) => (
-                <div key={ev.event_id} className="bg-white border border-[#E7DECE] rounded-2xl p-4 shadow-sm">
+                <div key={ev.event_id} className="bg-white border border-[#E7DECE] rounded-2xl p-4 shadow-sm overflow-hidden">
+                  {/* Event Flyer Display (If Available) */}
+                  {ev.flyer_url && (
+                    <div className="mb-3 rounded-xl overflow-hidden border border-[#E7DECE] relative group cursor-pointer"
+                         onClick={() => setSelectedFlyerUrl(ev.flyer_url)}>
+                      <img
+                        src={ev.flyer_url}
+                        alt="Invitation Flyer"
+                        className="w-full max-h-48 object-cover object-top hover:opacity-95 transition"
+                      />
+                      <div className="absolute bottom-2 right-2 bg-black/60 backdrop-blur-sm text-white px-2 py-0.5 rounded-md text-[10px] font-bold flex items-center gap-1">
+                        <ImageIcon className="w-3 h-3" /> Tap to view flyer
+                      </div>
+                    </div>
+                  )}
+
                   <div className="flex justify-between items-start">
                     <h3 className="font-serif font-bold text-lg text-slate-900">{ev.title}</h3>
                     {(profile?.role === 'SUPER_ADMIN' || profile?.role === 'ORGANIZER') && (
                       <button
                         onClick={() => openQRPoster(ev)}
-                        className="flex items-center gap-1 bg-amber-50 hover:bg-amber-100 border border-amber-300 text-[#C56B27] px-2.5 py-1 rounded-lg text-xs font-bold transition"
+                        className="flex items-center gap-1 bg-amber-50 hover:bg-amber-100 border border-amber-300 text-[#C56B27] px-2.5 py-1 rounded-lg text-xs font-bold transition shrink-0"
                       >
                         <QrCode className="w-3.5 h-3.5" /> Entrance QR
                       </button>
@@ -921,6 +968,7 @@ export default function App() {
                   setNewEvent({ ...newEvent, qr_secret_token: generateRandomToken() });
                   setShowEventModal(!showEventModal);
                   setAddressSuggestions([]);
+                  setFlyerFile(null);
                 }}
                 className="w-full flex items-center justify-center gap-2 py-2.5 bg-gradient-to-r from-[#C56B27] to-[#781D26] text-white rounded-xl text-xs font-bold shadow"
               >
@@ -934,7 +982,7 @@ export default function App() {
                     <input
                       type="text"
                       required
-                      placeholder="e.g. Sunday Satsang Sabha"
+                      placeholder="e.g. Satsang Sabha"
                       value={newEvent.title}
                       onChange={(e) => setNewEvent({ ...newEvent, title: e.target.value })}
                       className="w-full mt-1 px-3 py-2 border rounded-lg text-xs"
@@ -957,13 +1005,14 @@ export default function App() {
                     <input
                       type="text"
                       required
-                      placeholder="e.g. Main Assembly Hall"
+                      placeholder="e.g. Riverstone Community Center"
                       value={newEvent.venue}
                       onChange={(e) => setNewEvent({ ...newEvent, venue: e.target.value })}
                       className="w-full mt-1 px-3 py-2 border rounded-lg text-xs"
                     />
                   </div>
 
+                  {/* Physical Address Search */}
                   <div ref={addressWrapperRef} className="relative">
                     <label className="text-[11px] font-bold text-slate-600 uppercase flex items-center justify-between">
                       <span>Physical Street Address</span>
@@ -977,7 +1026,7 @@ export default function App() {
                     <input
                       type="text"
                       required
-                      placeholder="Start typing street address..."
+                      placeholder="e.g. 195 Don Minaker Dr, Brampton, ON L6P 2V7"
                       value={newEvent.address}
                       onChange={(e) => setNewEvent({ ...newEvent, address: e.target.value })}
                       onFocus={() => {
@@ -1003,6 +1052,29 @@ export default function App() {
                     )}
                   </div>
 
+                  {/* Optional Event Flyer Upload Input */}
+                  <div className="p-3 bg-[#FAF6F0] border border-[#E7DECE] rounded-xl">
+                    <label className="text-[11px] font-bold text-slate-700 uppercase flex items-center gap-1.5 mb-1">
+                      <UploadCloud className="w-4 h-4 text-[#C56B27]" />
+                      Invitation Flyer Image (Optional)
+                    </label>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      onChange={(e) => {
+                        if (e.target.files && e.target.files[0]) {
+                          setFlyerFile(e.target.files[0]);
+                        }
+                      }}
+                      className="w-full text-xs text-slate-500 file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-[#C56B27] file:text-white hover:file:opacity-90"
+                    />
+                    {flyerFile && (
+                      <p className="text-[10px] text-emerald-700 font-bold mt-1">
+                        ✓ Selected: {flyerFile.name} ({(flyerFile.size / 1024).toFixed(0)} KB)
+                      </p>
+                    )}
+                  </div>
+
                   <div>
                     <label className="text-[11px] font-bold text-slate-600 uppercase">Sponsor Gratitude Note</label>
                     <textarea
@@ -1018,14 +1090,24 @@ export default function App() {
                     <p className="text-xs font-mono font-bold text-slate-800 mt-0.5">{newEvent.qr_secret_token}</p>
                   </div>
 
-                  <button type="submit" className="w-full py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold">
-                    Publish Sabha & Generate Entrance QR
+                  <button
+                    type="submit"
+                    disabled={isUploadingFlyer}
+                    className="w-full py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold flex items-center justify-center gap-1.5"
+                  >
+                    {isUploadingFlyer ? (
+                      <>
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" /> Uploading Flyer & Publishing...
+                      </>
+                    ) : (
+                      'Publish Sabha & Generate Entrance QR'
+                    )}
                   </button>
                 </form>
               )}
             </div>
 
-            {/* RSVP Roster with Google Form Headcounts and Remarks */}
+            {/* RSVP Roster */}
             <div className="bg-white border border-[#E7DECE] rounded-2xl p-4">
               <div className="flex justify-between items-center mb-1">
                 <h3 className="font-serif font-bold text-slate-900 text-sm">RSVP Roster</h3>
@@ -1222,6 +1304,34 @@ export default function App() {
           </div>
         )}
       </main>
+
+      {/* FULLSCREEN FLYER VIEWER MODAL */}
+      {selectedFlyerUrl && (
+        <div className="fixed inset-0 bg-black/85 backdrop-blur-sm z-50 flex items-center justify-center p-3">
+          <div className="relative max-w-sm w-full bg-black rounded-3xl overflow-hidden shadow-2xl flex flex-col items-center">
+            <button
+              onClick={() => setSelectedFlyerUrl(null)}
+              className="absolute top-3 right-3 p-2 bg-black/60 hover:bg-black/80 rounded-full text-white z-10"
+              title="Close Flyer"
+            >
+              <X className="w-5 h-5" />
+            </button>
+            <img
+              src={selectedFlyerUrl}
+              alt="Full Invitation Flyer"
+              className="w-full max-h-[80vh] object-contain"
+            />
+            <div className="p-3 bg-[#FAF6F0] w-full text-center border-t border-[#E7DECE]">
+              <button
+                onClick={() => setSelectedFlyerUrl(null)}
+                className="w-full py-2 bg-gradient-to-r from-[#C56B27] to-[#781D26] text-white rounded-xl text-xs font-bold shadow"
+              >
+                Close Flyer
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* RSVP QUESTIONNAIRE MODAL FOR "YES" SUBMISSIONS */}
       {rsvpModalEvent && (
