@@ -19,17 +19,14 @@ export default function App() {
   const [scanStatus, setScanStatus] = useState<any>(null);
   const [verificationMessage, setVerificationMessage] = useState<string | null>(null);
 
-  // Admin & Management State
   const [allUsers, setAllUsers] = useState<any[]>([]);
   const [attendanceStats, setAttendanceStats] = useState<any[]>([]);
   const [rsvpStats, setRsvpStats] = useState<any[]>([]);
   const [showEventModal, setShowEventModal] = useState(false);
 
-  // Instant Address Search State
   const [addressSuggestions, setAddressSuggestions] = useState<any[]>([]);
   const [isSearchingAddress, setIsSearchingAddress] = useState(false);
 
-  // Active QR Poster Modal State
   const [selectedEventForQR, setSelectedEventForQR] = useState<any | null>(null);
   const [qrDataUrl, setQrDataUrl] = useState<string>('');
 
@@ -45,14 +42,14 @@ export default function App() {
     qr_secret_token: generateRandomToken(),
   });
 
-  const extractToken = (scannedText: string) => {
+  const extractToken = (scannedText: string): string => {
     try {
       if (scannedText.includes('checkin=')) {
         const url = new URL(scannedText);
         return url.searchParams.get('checkin') || scannedText;
       }
     } catch {
-      // not a standard URL, fallback to raw text
+      // Return raw token if not a valid URL
     }
     return scannedText.trim();
   };
@@ -60,8 +57,8 @@ export default function App() {
   const executeCheckIn = async (token: string) => {
     setActiveTab('scan');
 
-    const { data: { session: freshSession } } = await supabase.auth.getSession();
-    const accessToken = freshSession?.access_token || session?.access_token;
+    const { data } = await supabase.auth.getSession();
+    const accessToken = data?.session?.access_token || session?.access_token;
 
     if (!accessToken) {
       setScanStatus({ error: 'Please sign in to complete check-in.' });
@@ -78,8 +75,8 @@ export default function App() {
         },
         body: JSON.stringify({ qrSecretToken: token }),
       });
-      const data = await res.json();
-      setScanStatus(data);
+      const resData = await res.json();
+      setScanStatus(resData);
       loadAdminData();
     } catch {
       setScanStatus({ error: 'Network error checking in.' });
@@ -109,21 +106,21 @@ export default function App() {
       }
     };
 
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session);
-      if (session) {
-        fetchProfile(session.user.id);
-        handleUrlParams(session);
+    supabase.auth.getSession().then(({ data: { session: initialSession } }) => {
+      setSession(initialSession);
+      if (initialSession) {
+        fetchProfile(initialSession.user.id);
+        handleUrlParams(initialSession);
       } else {
         handleUrlParams(null);
       }
     });
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      setSession(session);
-      if (session) {
-        fetchProfile(session.user.id);
-        handleUrlParams(session);
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, newSession) => {
+      setSession(newSession);
+      if (newSession) {
+        fetchProfile(newSession.user.id);
+        handleUrlParams(newSession);
       } else {
         setProfile(null);
       }
@@ -195,7 +192,6 @@ export default function App() {
     }
   };
 
-  // Instant Address Search via OpenStreetMap
   const handleSearchAddress = async () => {
     if (!newEvent.address.trim()) {
       alert('Please enter a location or street to search.');
@@ -225,7 +221,6 @@ export default function App() {
     setAddressSuggestions([]);
   };
 
-  // Publish New Event with Auto-Generated QR Code
   const handleCreateEvent = async (e: React.FormEvent) => {
     e.preventDefault();
     const tokenToSave = newEvent.qr_secret_token || generateRandomToken();
@@ -243,7 +238,7 @@ export default function App() {
     if (error) {
       alert(error.message);
     } else {
-      alert(`Event "${newEvent.title}" published with auto-generated entrance QR code!`);
+      alert(`Event "${newEvent.title}" published with entrance QR code!`);
       setShowEventModal(false);
       setAddressSuggestions([]);
       setNewEvent({
@@ -290,6 +285,16 @@ export default function App() {
     }
   };
 
+  const downloadFile = (content: string, filename: string) => {
+    const encodedUri = encodeURI(content);
+    const link = document.createElement('a');
+    link.setAttribute('href', encodedUri);
+    link.setAttribute('download', filename);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
   const exportAttendanceCSV = () => {
     if (attendanceStats.length === 0) return alert('No attendance records found to export.');
     const headers = ['Devotee Name', 'Email', 'Event', 'Check-In Timestamp', 'Sponsor Attendance'];
@@ -318,17 +323,6 @@ export default function App() {
     downloadFile(csvContent, `sabha_rsvp_roster_${new Date().toISOString().slice(0, 10)}.csv`);
   };
 
-  const downloadFile = (content: string, filename: string) => {
-    const encodedUri = encodeURI(content);
-    const link = document.createElement('a');
-    link.setAttribute('href', encodedUri);
-    link.setAttribute('download', filename);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-  };
-
-  // In-app QR Scanner
   useEffect(() => {
     if (activeTab !== 'scan') return;
     const scanner = new Html5QrcodeScanner('qr-box', { fps: 10, qrbox: 250 }, false);
@@ -345,7 +339,7 @@ export default function App() {
     return () => {
       scanner.clear().catch(() => {});
     };
-  }, [activeTab, session]);
+  }, [activeTab]);
 
   if (!session) {
     return (
@@ -600,7 +594,6 @@ export default function App() {
               </div>
             </div>
 
-            {/* Event Management & Creator */}
             <div className="bg-white border border-[#E7DECE] rounded-2xl p-4 space-y-3">
               <div className="flex justify-between items-center">
                 <h3 className="font-serif font-bold text-slate-900 text-sm">Organizer Controls</h3>
@@ -631,7 +624,6 @@ export default function App() {
                 <PlusCircle className="w-4 h-4" /> Schedule New Sabha Event
               </button>
 
-              {/* Event Creation Form with Instant Address Picker */}
               {showEventModal && (
                 <form onSubmit={handleCreateEvent} className="pt-3 border-t border-[#E7DECE] space-y-3">
                   <div>
@@ -669,7 +661,6 @@ export default function App() {
                     />
                   </div>
 
-                  {/* Address Search & Instant Population */}
                   <div>
                     <label className="text-[11px] font-bold text-slate-600 uppercase">Physical Street Address</label>
                     <div className="flex gap-2 mt-1">
@@ -692,7 +683,6 @@ export default function App() {
                       </button>
                     </div>
 
-                    {/* Dropdown Suggestions */}
                     {addressSuggestions.length > 0 && (
                       <div className="mt-2 bg-white border border-[#E7DECE] rounded-xl shadow-lg overflow-hidden divide-y divide-[#E7DECE]">
                         <p className="px-3 py-1.5 bg-[#FAF6F0] text-[10px] font-bold uppercase text-[#C56B27]">
@@ -735,7 +725,6 @@ export default function App() {
               )}
             </div>
 
-            {/* List of Scheduled Events with Entrance QR Launcher */}
             <div className="bg-white border border-[#E7DECE] rounded-2xl p-4">
               <h3 className="font-serif font-bold text-slate-900 text-sm mb-1">Active Assembly QR Codes</h3>
               <p className="text-[11px] text-slate-500 mb-3">Launch or print the entrance check-in poster for attendees.</p>
@@ -758,7 +747,6 @@ export default function App() {
               </div>
             </div>
 
-            {/* RSVP Roster Section */}
             <div className="bg-white border border-[#E7DECE] rounded-2xl p-4">
               <h3 className="font-serif font-bold text-slate-900 text-sm mb-1">RSVP Roster</h3>
               <p className="text-[11px] text-slate-500 mb-3">Devotees who have submitted their attendance intention.</p>
@@ -785,7 +773,6 @@ export default function App() {
               )}
             </div>
 
-            {/* User Roles & Sponsor Governance */}
             <div className="bg-white border border-[#E7DECE] rounded-2xl p-4">
               <h3 className="font-serif font-bold text-slate-900 text-sm mb-1">User Governance & Roles</h3>
               <p className="text-[11px] text-slate-500 mb-3">Manage roles (Super Admin, Organizer, Attendee) and sponsors.</p>
@@ -888,7 +875,6 @@ export default function App() {
         </div>
       )}
 
-      {/* Navigation Footer */}
       <footer className="fixed bottom-0 left-0 right-0 max-w-md mx-auto bg-white border-t border-[#E7DECE] flex justify-around py-3 z-20">
         <button
           onClick={() => setActiveTab('events')}
