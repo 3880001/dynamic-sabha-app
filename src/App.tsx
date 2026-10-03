@@ -4,7 +4,7 @@ import { Html5QrcodeScanner } from 'html5-qrcode';
 import {
   Calendar, MapPin, QrCode, CheckCircle2, HeartHandshake, ShieldCheck,
   UserCheck, LogOut, Sparkles, Users, Download, PlusCircle, Award, ListChecks,
-  Printer, X, Navigation, LocateFixed
+  Printer, X, Navigation, Search, Check
 } from 'lucide-react';
 
 export default function App() {
@@ -24,7 +24,10 @@ export default function App() {
   const [attendanceStats, setAttendanceStats] = useState<any[]>([]);
   const [rsvpStats, setRsvpStats] = useState<any[]>([]);
   const [showEventModal, setShowEventModal] = useState(false);
-  const [isGeocoding, setIsGeocoding] = useState(false);
+
+  // Instant Address Search State
+  const [addressSuggestions, setAddressSuggestions] = useState<any[]>([]);
+  const [isSearchingAddress, setIsSearchingAddress] = useState(false);
 
   // Active QR Poster Modal State
   const [selectedEventForQR, setSelectedEventForQR] = useState<any | null>(null);
@@ -38,14 +41,10 @@ export default function App() {
     date_time: '',
     venue: '',
     address: '',
-    latitude: '' as string | number,
-    longitude: '' as string | number,
-    radius_meters: 300,
     sponsor_message: 'Thank you for your generous sponsorship and devoted support.',
     qr_secret_token: generateRandomToken(),
   });
 
-  // Extract clean token from either full URL or raw string
   const extractToken = (scannedText: string) => {
     try {
       if (scannedText.includes('checkin=')) {
@@ -53,7 +52,7 @@ export default function App() {
         return url.searchParams.get('checkin') || scannedText;
       }
     } catch {
-      // not a valid url structure, return as raw token
+      // not a standard URL, fallback to raw text
     }
     return scannedText.trim();
   };
@@ -61,7 +60,6 @@ export default function App() {
   const executeCheckIn = async (token: string) => {
     setActiveTab('scan');
 
-    // Retrieve active session token directly from Supabase client
     const { data: { session: freshSession } } = await supabase.auth.getSession();
     const accessToken = freshSession?.access_token || session?.access_token;
 
@@ -70,33 +68,21 @@ export default function App() {
       return;
     }
 
-    const performPost = async (lat?: number, lng?: number) => {
-      try {
-        const res = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/checkin`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${accessToken}`,
-            'apikey': import.meta.env.VITE_SUPABASE_ANON_KEY,
-          },
-          body: JSON.stringify({ qrSecretToken: token, userLat: lat, userLng: lng }),
-        });
-        const data = await res.json();
-        setScanStatus(data);
-        loadAdminData();
-      } catch {
-        setScanStatus({ error: 'Network error checking in.' });
-      }
-    };
-
-    if ('geolocation' in navigator) {
-      navigator.geolocation.getCurrentPosition(
-        (pos) => performPost(pos.coords.latitude, pos.coords.longitude),
-        () => performPost(),
-        { enableHighAccuracy: true, timeout: 7000 }
-      );
-    } else {
-      performPost();
+    try {
+      const res = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/checkin`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${accessToken}`,
+          'apikey': import.meta.env.VITE_SUPABASE_ANON_KEY,
+        },
+        body: JSON.stringify({ qrSecretToken: token }),
+      });
+      const data = await res.json();
+      setScanStatus(data);
+      loadAdminData();
+    } catch {
+      setScanStatus({ error: 'Network error checking in.' });
     }
   };
 
@@ -209,57 +195,39 @@ export default function App() {
     }
   };
 
-  const handleGeocodeAddress = async () => {
+  // Instant Address Search via OpenStreetMap
+  const handleSearchAddress = async () => {
     if (!newEvent.address.trim()) {
-      alert('Please enter a street address first.');
+      alert('Please enter a location or street to search.');
       return;
     }
-    setIsGeocoding(true);
+    setIsSearchingAddress(true);
     try {
       const res = await fetch(
-        `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(newEvent.address)}`
+        `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(newEvent.address)}&limit=5`
       );
       const data = await res.json();
       if (data && data.length > 0) {
-        setNewEvent((prev) => ({
-          ...prev,
-          latitude: parseFloat(data[0].lat),
-          longitude: parseFloat(data[0].lon),
-        }));
-        alert(`Location verified: Lat ${parseFloat(data[0].lat).toFixed(4)}, Lon ${parseFloat(data[0].lon).toFixed(4)}`);
+        setAddressSuggestions(data);
       } else {
-        alert('Could not find GPS coordinates for this address. Please ensure street name and city are accurate.');
+        alert('No matching addresses found. Please refine your query.');
+        setAddressSuggestions([]);
       }
     } catch {
-      alert('Error fetching coordinates. You can set current location instead.');
+      alert('Error searching for address suggestions.');
     } finally {
-      setIsGeocoding(false);
+      setIsSearchingAddress(false);
     }
   };
 
-  const handleUseCurrentLocation = () => {
-    if ('geolocation' in navigator) {
-      navigator.geolocation.getCurrentPosition(
-        (pos) => {
-          setNewEvent((prev) => ({
-            ...prev,
-            latitude: pos.coords.latitude,
-            longitude: pos.coords.longitude,
-          }));
-          alert('Current location set as venue coordinates.');
-        },
-        () => alert('Could not retrieve current location. Please grant browser permission.')
-      );
-    }
+  const handleSelectAddress = (selectedDisplayName: string) => {
+    setNewEvent((prev) => ({ ...prev, address: selectedDisplayName }));
+    setAddressSuggestions([]);
   };
 
+  // Publish New Event with Auto-Generated QR Code
   const handleCreateEvent = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newEvent.address.trim()) {
-      alert('Please provide the physical street address for the Sabha venue.');
-      return;
-    }
-
     const tokenToSave = newEvent.qr_secret_token || generateRandomToken();
 
     const { error } = await supabase.from('events').insert({
@@ -267,9 +235,6 @@ export default function App() {
       date_time: new Date(newEvent.date_time).toISOString(),
       venue: newEvent.venue,
       address: newEvent.address,
-      latitude: newEvent.latitude ? parseFloat(String(newEvent.latitude)) : null,
-      longitude: newEvent.longitude ? parseFloat(String(newEvent.longitude)) : null,
-      radius_meters: newEvent.radius_meters || 300,
       sponsor_message: newEvent.sponsor_message,
       qr_secret_token: tokenToSave,
       created_by: session.user.id,
@@ -278,16 +243,14 @@ export default function App() {
     if (error) {
       alert(error.message);
     } else {
-      alert(`Event "${newEvent.title}" published!`);
+      alert(`Event "${newEvent.title}" published with auto-generated entrance QR code!`);
       setShowEventModal(false);
+      setAddressSuggestions([]);
       setNewEvent({
         title: '',
         date_time: '',
         venue: '',
         address: '',
-        latitude: '',
-        longitude: '',
-        radius_meters: 300,
         sponsor_message: 'Thank you for your generous sponsorship and devoted support.',
         qr_secret_token: generateRandomToken(),
       });
@@ -295,7 +258,6 @@ export default function App() {
     }
   };
 
-  // Encodes the full web link into the QR code poster
   const openQRPoster = (event: any) => {
     setSelectedEventForQR(event);
     const deepLinkUrl = `https://3880001.github.io/dynamic-sabha-app/?checkin=${encodeURIComponent(event.qr_secret_token)}`;
@@ -366,7 +328,7 @@ export default function App() {
     document.body.removeChild(link);
   };
 
-  // In-app QR Scanner: accepts both URL format and raw token
+  // In-app QR Scanner
   useEffect(() => {
     if (activeTab !== 'scan') return;
     const scanner = new Html5QrcodeScanner('qr-box', { fps: 10, qrbox: 250 }, false);
@@ -662,13 +624,14 @@ export default function App() {
                 onClick={() => {
                   setNewEvent({ ...newEvent, qr_secret_token: generateRandomToken() });
                   setShowEventModal(!showEventModal);
+                  setAddressSuggestions([]);
                 }}
                 className="w-full flex items-center justify-center gap-2 py-2.5 bg-gradient-to-r from-[#C56B27] to-[#781D26] text-white rounded-xl text-xs font-bold shadow"
               >
                 <PlusCircle className="w-4 h-4" /> Schedule New Sabha Event
               </button>
 
-              {/* Event Creation Form */}
+              {/* Event Creation Form with Instant Address Picker */}
               {showEventModal && (
                 <form onSubmit={handleCreateEvent} className="pt-3 border-t border-[#E7DECE] space-y-3">
                   <div>
@@ -706,54 +669,48 @@ export default function App() {
                     />
                   </div>
 
+                  {/* Address Search & Instant Population */}
                   <div>
-                    <div className="flex justify-between items-center">
-                      <label className="text-[11px] font-bold text-slate-600 uppercase">Physical Street Address</label>
-                      <button
-                        type="button"
-                        onClick={handleGeocodeAddress}
-                        disabled={isGeocoding}
-                        className="text-[10px] text-[#C56B27] font-bold hover:underline"
-                      >
-                        {isGeocoding ? 'Looking up...' : 'Verify Address GPS'}
-                      </button>
-                    </div>
-                    <input
-                      type="text"
-                      required
-                      placeholder="e.g. 61 Claireville Dr, Etobicoke, ON M9W 5Z7"
-                      value={newEvent.address}
-                      onChange={(e) => setNewEvent({ ...newEvent, address: e.target.value })}
-                      className="w-full mt-1 px-3 py-2 border rounded-lg text-xs"
-                    />
-                  </div>
-
-                  <div className="p-3 bg-[#FAF6F0] border border-[#E7DECE] rounded-xl space-y-2">
-                    <div className="flex justify-between items-center">
-                      <span className="text-[10px] font-bold text-slate-700 uppercase">Physical Geofencing</span>
-                      <button
-                        type="button"
-                        onClick={handleUseCurrentLocation}
-                        className="flex items-center gap-1 text-[10px] text-[#C56B27] font-bold"
-                      >
-                        <LocateFixed className="w-3 h-3" /> Set from Current GPS
-                      </button>
-                    </div>
-                    <div className="grid grid-cols-2 gap-2 text-[10px] font-mono text-slate-600">
-                      <div>Lat: {newEvent.latitude || 'Not set'}</div>
-                      <div>Lon: {newEvent.longitude || 'Not set'}</div>
-                    </div>
-                    <div>
-                      <label className="text-[10px] font-semibold text-slate-500">Allowed Scan Radius (Meters)</label>
+                    <label className="text-[11px] font-bold text-slate-600 uppercase">Physical Street Address</label>
+                    <div className="flex gap-2 mt-1">
                       <input
-                        type="number"
-                        min="100"
-                        max="2000"
-                        value={newEvent.radius_meters}
-                        onChange={(e) => setNewEvent({ ...newEvent, radius_meters: parseInt(e.target.value) || 300 })}
-                        className="w-full mt-0.5 px-2 py-1 border rounded text-xs bg-white"
+                        type="text"
+                        required
+                        placeholder="Type address or Mandir location..."
+                        value={newEvent.address}
+                        onChange={(e) => setNewEvent({ ...newEvent, address: e.target.value })}
+                        className="flex-1 px-3 py-2 border rounded-lg text-xs"
                       />
+                      <button
+                        type="button"
+                        onClick={handleSearchAddress}
+                        disabled={isSearchingAddress}
+                        className="px-3 py-2 bg-[#C56B27] text-white rounded-lg text-xs font-bold flex items-center gap-1 hover:bg-[#781D26] transition shrink-0"
+                      >
+                        <Search className="w-3.5 h-3.5" />
+                        {isSearchingAddress ? 'Searching...' : 'Find'}
+                      </button>
                     </div>
+
+                    {/* Dropdown Suggestions */}
+                    {addressSuggestions.length > 0 && (
+                      <div className="mt-2 bg-white border border-[#E7DECE] rounded-xl shadow-lg overflow-hidden divide-y divide-[#E7DECE]">
+                        <p className="px-3 py-1.5 bg-[#FAF6F0] text-[10px] font-bold uppercase text-[#C56B27]">
+                          Select Matching Address:
+                        </p>
+                        {addressSuggestions.map((item, idx) => (
+                          <button
+                            type="button"
+                            key={idx}
+                            onClick={() => handleSelectAddress(item.display_name)}
+                            className="w-full text-left p-2.5 text-[11px] text-slate-700 hover:bg-amber-50 flex items-center justify-between transition"
+                          >
+                            <span className="line-clamp-2">{item.display_name}</span>
+                            <Check className="w-3.5 h-3.5 text-[#C56B27] shrink-0 ml-2" />
+                          </button>
+                        ))}
+                      </div>
+                    )}
                   </div>
 
                   <div>
@@ -767,12 +724,12 @@ export default function App() {
                   </div>
 
                   <div className="p-2.5 bg-amber-50 border border-amber-200 rounded-lg">
-                    <p className="text-[10px] uppercase font-bold text-amber-800">Auto-Generated QR Token</p>
+                    <p className="text-[10px] uppercase font-bold text-amber-800">Auto-Generated Entrance Token</p>
                     <p className="text-xs font-mono font-bold text-slate-800 mt-0.5">{newEvent.qr_secret_token}</p>
                   </div>
 
                   <button type="submit" className="w-full py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold">
-                    Publish Sabha & Enable Geo-Protection
+                    Publish Sabha & Generate Entrance QR
                   </button>
                 </form>
               )}
