@@ -5,7 +5,8 @@ import {
   Calendar, MapPin, QrCode, CheckCircle2, HeartHandshake, ShieldCheck,
   UserCheck, LogOut, Sparkles, Users, Download, PlusCircle, Award, ListChecks,
   Printer, X, Navigation, Check, Loader2, User, Plus, Trash2, ChevronDown, ChevronUp,
-  MessageSquare, Image as ImageIcon, UploadCloud, Edit3, Lock, Mail, BellRing
+  MessageSquare, Image as ImageIcon, UploadCloud, Edit3, Lock, Mail, BellRing,
+  KeyRound, Share2, Copy
 } from 'lucide-react';
 
 interface Child {
@@ -19,6 +20,7 @@ export default function App() {
   const [profile, setProfile] = useState<any>(null);
   const [activeTab, setActiveTab] = useState<'events' | 'scan' | 'profile' | 'admin'>('events');
   const [events, setEvents] = useState<any[]>([]);
+  const [unlockedEventIds, setUnlockedEventIds] = useState<Set<string>>(new Set());
   const [userRsvps, setUserRsvps] = useState<Record<string, any>>({});
   const [authEmail, setAuthEmail] = useState('');
   const [authPassword, setAuthPassword] = useState('');
@@ -26,6 +28,11 @@ export default function App() {
   const [isRegistering, setIsRegistering] = useState(false);
   const [scanStatus, setScanStatus] = useState<any>(null);
   const [verificationMessage, setVerificationMessage] = useState<string | null>(null);
+
+  // Manual Join Code Modal State
+  const [showJoinCodeModal, setShowJoinCodeModal] = useState(false);
+  const [inputJoinCode, setInputJoinCode] = useState('');
+  const [isJoiningEvent, setIsJoiningEvent] = useState(false);
 
   // Profile Edit State
   const [editName, setEditName] = useState('');
@@ -77,6 +84,9 @@ export default function App() {
   const generateRandomToken = () =>
     `SABHA-${Math.random().toString(36).substring(2, 8).toUpperCase()}-${Date.now().toString().slice(-4)}`;
 
+  const generateShortJoinCode = () =>
+    `SABHA-${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
+
   const [newEvent, setNewEvent] = useState({
     title: '',
     date_time: '',
@@ -84,6 +94,7 @@ export default function App() {
     address: '',
     sponsor_message: 'Thank you for your generous sponsorship and devoted support.',
     qr_secret_token: generateRandomToken(),
+    join_code: generateShortJoinCode(),
   });
 
   const extractToken = (scannedText: string): string => {
@@ -93,7 +104,7 @@ export default function App() {
         return url.searchParams.get('checkin') || scannedText;
       }
     } catch {
-      // not a standard url
+      // fallback
     }
     return scannedText.trim();
   };
@@ -127,12 +138,42 @@ export default function App() {
     }
   };
 
+  // Join Event by Code (Called manually or via ?join= parameter)
+  const handleJoinByCode = async (codeToUnlock: string, showToast = true) => {
+    if (!codeToUnlock.trim()) return;
+    setIsJoiningEvent(true);
+    try {
+      const { data, error } = await supabase.rpc('unlock_event_by_code', {
+        p_code: codeToUnlock.trim(),
+      });
+
+      if (error) throw error;
+
+      if (data?.success) {
+        if (showToast) alert(`Event unlocked: "${data.title}"!`);
+        setShowJoinCodeModal(false);
+        setInputJoinCode('');
+        if (session) {
+          fetchUnlockedEvents(session.user.id);
+          loadEvents();
+        }
+      } else {
+        if (showToast) alert(data?.error || 'Invalid Sabha Code.');
+      }
+    } catch (err: any) {
+      if (showToast) alert(`Error: ${err.message}`);
+    } finally {
+      setIsJoiningEvent(false);
+    }
+  };
+
   useEffect(() => {
     const handleUrlParams = async (currentSession: any) => {
       const params = new URLSearchParams(window.location.search);
       const token_hash = params.get('token_hash');
       const type = params.get('type') as any;
       const checkinToken = params.get('checkin');
+      const joinParam = params.get('join');
 
       if (token_hash && type) {
         const { error } = await supabase.auth.verifyOtp({ token_hash, type });
@@ -148,12 +189,18 @@ export default function App() {
           executeCheckIn(checkinToken);
         }
       }
+
+      if (joinParam && currentSession) {
+        window.history.replaceState({}, document.title, window.location.pathname);
+        handleJoinByCode(joinParam, false);
+      }
     };
 
     supabase.auth.getSession().then(({ data: { session: initialSession } }) => {
       setSession(initialSession);
       if (initialSession) {
         fetchProfile(initialSession.user.id);
+        fetchUnlockedEvents(initialSession.user.id);
         fetchUserRsvps(initialSession.user.id);
         handleUrlParams(initialSession);
       } else {
@@ -165,10 +212,12 @@ export default function App() {
       setSession(newSession);
       if (newSession) {
         fetchProfile(newSession.user.id);
+        fetchUnlockedEvents(newSession.user.id);
         fetchUserRsvps(newSession.user.id);
         handleUrlParams(newSession);
       } else {
         setProfile(null);
+        setUnlockedEventIds(new Set());
         setUserRsvps({});
       }
     });
@@ -191,6 +240,13 @@ export default function App() {
       }
     }
     loadEvents();
+  };
+
+  const fetchUnlockedEvents = async (userId: string) => {
+    const { data } = await supabase.from('event_access').select('event_id').eq('user_id', userId);
+    if (data) {
+      setUnlockedEventIds(new Set(data.map((row) => row.event_id)));
+    }
   };
 
   const fetchUserRsvps = async (userId: string) => {
@@ -229,12 +285,17 @@ export default function App() {
   useEffect(() => {
     if (!session || events.length === 0) return;
     const now = Date.now();
-    const upcoming = events.find((ev) => new Date(ev.date_time).getTime() > now);
-    if (upcoming && !userRsvps[upcoming.event_id]) {
+    const upcoming = events.find((ev) => {
+      const isFuture = new Date(ev.date_time).getTime() > now;
+      const isAccessible = profile?.role === 'SUPER_ADMIN' || profile?.role === 'ORGANIZER' || unlockedEventIds.has(ev.event_id);
+      return isFuture && isAccessible && !userRsvps[ev.event_id];
+    });
+
+    if (upcoming) {
       setPopupEvent(upcoming);
       setShowPendingRsvpPopup(true);
     }
-  }, [events, userRsvps, session]);
+  }, [events, userRsvps, unlockedEventIds, session, profile]);
 
   const handleAuth = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -325,7 +386,6 @@ export default function App() {
     }
   };
 
-  // Dispatch Email Reminders via Edge Function
   const triggerReminder = async (type: 'rsvp_reminder' | 'checkin_30' | 'checkin_15' | 'checkin_live_15') => {
     if (!selectedAdminEventId) return;
     setIsSendingReminder(true);
@@ -438,6 +498,18 @@ export default function App() {
     setShowAddressDropdown(false);
   };
 
+  // Copy WhatsApp Invite Link to Clipboard
+  const copyWhatsAppInvite = (joinCode: string, title: string) => {
+    const inviteUrl = `https://3880001.github.io/dynamic-sabha-app/?join=${encodeURIComponent(joinCode)}`;
+    const textToShare = `Jai Swaminarayan! Please RSVP for "${title}". Tap this link to view details and submit: ${inviteUrl}`;
+
+    navigator.clipboard.writeText(textToShare).then(
+      () => alert('Invite link copied! You can now paste it into WhatsApp groups.'),
+      () => alert(`Link: ${inviteUrl}`)
+    );
+  };
+
+  // Event Creation with Flyer Upload and Join Code
   const handleCreateEvent = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsUploadingFlyer(true);
@@ -466,6 +538,7 @@ export default function App() {
     }
 
     const tokenToSave = newEvent.qr_secret_token || generateRandomToken();
+    const joinCodeToSave = newEvent.join_code || generateShortJoinCode();
 
     const { error } = await supabase.from('events').insert({
       title: newEvent.title,
@@ -474,6 +547,7 @@ export default function App() {
       address: newEvent.address,
       sponsor_message: newEvent.sponsor_message,
       qr_secret_token: tokenToSave,
+      join_code: joinCodeToSave,
       flyer_url: uploadedFlyerUrl,
       created_by: session.user.id,
     });
@@ -483,7 +557,7 @@ export default function App() {
     if (error) {
       alert(error.message);
     } else {
-      alert(`Event "${newEvent.title}" published with entrance QR code!`);
+      alert(`Event "${newEvent.title}" published! Join code: ${joinCodeToSave}`);
       setShowEventModal(false);
       setFlyerFile(null);
       setAddressSuggestions([]);
@@ -494,6 +568,7 @@ export default function App() {
         address: '',
         sponsor_message: 'Thank you for your generous sponsorship and devoted support.',
         qr_secret_token: generateRandomToken(),
+        join_code: generateShortJoinCode(),
       });
       loadEvents();
     }
@@ -663,10 +738,15 @@ export default function App() {
     );
   }
 
-  // Active / non-expired events filter for attendees
-  const activeEvents = events.filter((ev) => new Date(ev.date_time).getTime() > Date.now());
+  // Filter events visible to the current attendee:
+  // Admins & Organizers see all upcoming events. Devotees see upcoming events they have unlocked.
+  const visibleEvents = events.filter((ev) => {
+    const isFuture = new Date(ev.date_time).getTime() > Date.now();
+    if (!isFuture) return false;
+    if (profile?.role === 'SUPER_ADMIN' || profile?.role === 'ORGANIZER') return true;
+    return unlockedEventIds.has(ev.event_id);
+  });
 
-  // Aggregate stats for overview
   const confirmedYesRsvps = rsvpStats.filter((r) => r.status === 'Yes');
   const totalHeadcount = confirmedYesRsvps.reduce(
     (sum, r) => sum + (Number(r.adult_count) || 1) + (Number(r.child_count) || 0),
@@ -709,17 +789,30 @@ export default function App() {
           <div className="space-y-4">
             <div className="flex justify-between items-center mb-1">
               <h2 className="text-lg font-serif font-bold text-[#781D26]">Sabha Karyakram</h2>
-              <span className="text-[11px] bg-amber-100 text-[#C56B27] font-semibold px-2 py-0.5 rounded-full border border-amber-200">
-                Weekly Satsang
-              </span>
+              <button
+                type="button"
+                onClick={() => setShowJoinCodeModal(true)}
+                className="flex items-center gap-1 text-[11px] bg-white border border-[#E7DECE] text-[#C56B27] font-bold px-2.5 py-1 rounded-full hover:bg-amber-50 shadow-sm"
+              >
+                <KeyRound className="w-3.5 h-3.5" /> + Enter Sabha Code
+              </button>
             </div>
 
-            {activeEvents.length === 0 ? (
-              <div className="bg-white border border-[#E7DECE] rounded-2xl p-8 text-center text-slate-400 text-sm">
-                No scheduled upcoming assemblies found.
+            {visibleEvents.length === 0 ? (
+              <div className="bg-white border border-[#E7DECE] rounded-2xl p-8 text-center space-y-3">
+                <p className="text-xs text-slate-500 leading-relaxed">
+                  No upcoming karyakrams currently assigned to your feed. If your local center provided a Sabha Code or WhatsApp invitation link, tap below to unlock it.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => setShowJoinCodeModal(true)}
+                  className="px-4 py-2 bg-gradient-to-r from-[#C56B27] to-[#781D26] text-white text-xs font-bold rounded-xl shadow inline-flex items-center gap-1.5"
+                >
+                  <KeyRound className="w-3.5 h-3.5" /> Enter Sabha Code
+                </button>
               </div>
             ) : (
-              activeEvents.map((ev) => {
+              visibleEvents.map((ev) => {
                 const userRsvp = userRsvps[ev.event_id];
                 const isCompleted = !!userRsvp;
                 const isEditing = editingRsvpEventId === ev.event_id;
@@ -745,15 +838,35 @@ export default function App() {
                     )}
 
                     <div className="flex justify-between items-start">
-                      <h3 className="font-serif font-bold text-lg text-slate-900">{ev.title}</h3>
-                      {(profile?.role === 'SUPER_ADMIN' || profile?.role === 'ORGANIZER') && (
-                        <button
-                          onClick={() => openQRPoster(ev)}
-                          className="flex items-center gap-1 bg-amber-50 hover:bg-amber-100 border border-amber-300 text-[#C56B27] px-2.5 py-1 rounded-lg text-xs font-bold transition shrink-0"
-                        >
-                          <QrCode className="w-3.5 h-3.5" /> Entrance QR
-                        </button>
-                      )}
+                      <div>
+                        <h3 className="font-serif font-bold text-lg text-slate-900 leading-snug">{ev.title}</h3>
+                        {ev.join_code && (
+                          <span className="text-[10px] font-mono font-bold text-[#C56B27] bg-amber-50 px-2 py-0.5 rounded border border-amber-200 mt-1 inline-block">
+                            Code: {ev.join_code}
+                          </span>
+                        )}
+                      </div>
+
+                      <div className="flex gap-1.5 shrink-0">
+                        {ev.join_code && (
+                          <button
+                            type="button"
+                            onClick={() => copyWhatsAppInvite(ev.join_code, ev.title)}
+                            className="p-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs"
+                            title="Copy WhatsApp Invite Link"
+                          >
+                            <Share2 className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                        {(profile?.role === 'SUPER_ADMIN' || profile?.role === 'ORGANIZER') && (
+                          <button
+                            onClick={() => openQRPoster(ev)}
+                            className="flex items-center gap-1 bg-amber-50 hover:bg-amber-100 border border-amber-300 text-[#C56B27] px-2.5 py-1 rounded-lg text-xs font-bold transition shrink-0"
+                          >
+                            <QrCode className="w-3.5 h-3.5" /> Entrance QR
+                          </button>
+                        )}
+                      </div>
                     </div>
 
                     <div className="mt-2.5 space-y-1.5">
@@ -786,7 +899,7 @@ export default function App() {
                       )}
                     </div>
 
-                    {/* RSVP Status / Choice Lock */}
+                    {/* RSVP Status / Actions */}
                     <div className="mt-4 pt-3 border-t border-[#F2ECE1]">
                       {isCompleted && !isEditing ? (
                         <div className="space-y-2">
@@ -1128,7 +1241,11 @@ export default function App() {
 
               <button
                 onClick={() => {
-                  setNewEvent({ ...newEvent, qr_secret_token: generateRandomToken() });
+                  setNewEvent({
+                    ...newEvent,
+                    qr_secret_token: generateRandomToken(),
+                    join_code: generateShortJoinCode(),
+                  });
                   setShowEventModal(!showEventModal);
                   setAddressSuggestions([]);
                   setFlyerFile(null);
@@ -1246,9 +1363,15 @@ export default function App() {
                     />
                   </div>
 
-                  <div className="p-2.5 bg-amber-50 border border-amber-200 rounded-lg">
-                    <p className="text-[10px] uppercase font-bold text-amber-800">Auto-Generated Entrance Token</p>
-                    <p className="text-xs font-mono font-bold text-slate-800 mt-0.5">{newEvent.qr_secret_token}</p>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div className="p-2.5 bg-amber-50 border border-amber-200 rounded-lg">
+                      <p className="text-[10px] uppercase font-bold text-amber-800">Sabha Join Code</p>
+                      <p className="text-xs font-mono font-bold text-slate-800 mt-0.5">{newEvent.join_code}</p>
+                    </div>
+                    <div className="p-2.5 bg-amber-50 border border-amber-200 rounded-lg">
+                      <p className="text-[10px] uppercase font-bold text-amber-800">QR Entrance Token</p>
+                      <p className="text-xs font-mono font-bold text-slate-800 mt-0.5">{newEvent.qr_secret_token}</p>
+                    </div>
                   </div>
 
                   <button
@@ -1261,7 +1384,7 @@ export default function App() {
                         <Loader2 className="w-3.5 h-3.5 animate-spin" /> Uploading Flyer & Publishing...
                       </>
                     ) : (
-                      'Publish Sabha & Generate Entrance QR'
+                      'Publish Sabha & Generate Codes'
                     )}
                   </button>
                 </form>
@@ -1589,6 +1712,64 @@ export default function App() {
           </div>
         )}
       </main>
+
+      {/* MANUAL JOIN SABHA CODE MODAL */}
+      {showJoinCodeModal && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-[#FAF6F0] border-2 border-[#C56B27] rounded-3xl p-6 w-full max-w-sm shadow-2xl relative text-center">
+            <button
+              onClick={() => setShowJoinCodeModal(false)}
+              className="absolute top-4 right-4 p-1.5 bg-slate-200 hover:bg-slate-300 rounded-full text-slate-700"
+            >
+              <X className="w-4 h-4" />
+            </button>
+
+            <div className="w-12 h-12 mx-auto mb-2 rounded-full bg-gradient-to-tr from-[#781D26] to-[#C56B27] flex items-center justify-center text-white shadow">
+              <KeyRound className="w-6 h-6 text-amber-200" />
+            </div>
+
+            <p className="text-[10px] font-bold uppercase tracking-wider text-[#C56B27]">Event Access</p>
+            <h3 className="text-lg font-serif font-black text-[#781D26] mt-0.5">Enter Sabha Code</h3>
+            <p className="text-xs text-slate-600 mt-1 mb-4">
+              Enter the Sabha Code provided by your local Mandir or karyakar to unlock this karyakram.
+            </p>
+
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                handleJoinByCode(inputJoinCode);
+              }}
+              className="space-y-3"
+            >
+              <input
+                type="text"
+                required
+                placeholder="e.g. SABHA-A1B2"
+                value={inputJoinCode}
+                onChange={(e) => setInputJoinCode(e.target.value.toUpperCase())}
+                className="w-full text-center tracking-widest font-mono font-bold text-sm px-3 py-2.5 border rounded-xl bg-white focus:outline-none focus:border-[#C56B27]"
+              />
+
+              <div className="flex gap-2 pt-1">
+                <button
+                  type="submit"
+                  disabled={isJoiningEvent}
+                  className="flex-1 py-2.5 bg-gradient-to-r from-[#C56B27] to-[#781D26] text-white rounded-xl text-xs font-bold shadow hover:opacity-95 flex items-center justify-center gap-1.5"
+                >
+                  {isJoiningEvent ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : 'Unlock Sabha'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowJoinCodeModal(false)}
+                  className="px-4 py-2.5 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-xl text-xs font-bold"
+                >
+                  Cancel
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
       {/* IN-APP POPUP MODAL FOR PENDING RSVP */}
       {showPendingRsvpPopup && popupEvent && (
