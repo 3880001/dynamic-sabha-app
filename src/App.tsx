@@ -45,11 +45,57 @@ export default function App() {
     qr_secret_token: generateRandomToken(),
   });
 
+  // Extract clean token from either full URL or raw string
+  const extractToken = (scannedText: string) => {
+    try {
+      if (scannedText.includes('checkin=')) {
+        const url = new URL(scannedText);
+        return url.searchParams.get('checkin') || scannedText;
+      }
+    } catch {
+      // not a valid url structure, return as raw token
+    }
+    return scannedText.trim();
+  };
+
+  const executeCheckIn = async (token: string, tokenSession: any) => {
+    setActiveTab('scan');
+    const performPost = async (lat?: number, lng?: number) => {
+      try {
+        const res = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/checkin`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${tokenSession?.access_token}`,
+          },
+          body: JSON.stringify({ qrSecretToken: token, userLat: lat, userLng: lng }),
+        });
+        const data = await res.json();
+        setScanStatus(data);
+        loadAdminData();
+      } catch {
+        setScanStatus({ error: 'Network error checking in.' });
+      }
+    };
+
+    if ('geolocation' in navigator) {
+      navigator.geolocation.getCurrentPosition(
+        (pos) => performPost(pos.coords.latitude, pos.coords.longitude),
+        () => performPost(),
+        { enableHighAccuracy: true, timeout: 7000 }
+      );
+    } else {
+      performPost();
+    }
+  };
+
   useEffect(() => {
-    const handleUrlConfirmation = async () => {
+    // 1. Check for token_hash (Email confirmation) or checkin (Camera scan) in URL
+    const handleUrlParams = async (currentSession: any) => {
       const params = new URLSearchParams(window.location.search);
       const token_hash = params.get('token_hash');
       const type = params.get('type') as any;
+      const checkinToken = params.get('checkin');
 
       if (token_hash && type) {
         const { error } = await supabase.auth.verifyOtp({ token_hash, type });
@@ -58,19 +104,31 @@ export default function App() {
           window.history.replaceState({}, document.title, window.location.pathname);
         }
       }
-    };
 
-    handleUrlConfirmation();
+      if (checkinToken && currentSession) {
+        window.history.replaceState({}, document.title, window.location.pathname);
+        executeCheckIn(checkinToken, currentSession);
+      }
+    };
 
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session);
-      if (session) fetchProfile(session.user.id);
+      if (session) {
+        fetchProfile(session.user.id);
+        handleUrlParams(session);
+      } else {
+        handleUrlParams(null);
+      }
     });
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setSession(session);
-      if (session) fetchProfile(session.user.id);
-      else setProfile(null);
+      if (session) {
+        fetchProfile(session.user.id);
+        handleUrlParams(session);
+      } else {
+        setProfile(null);
+      }
     });
 
     return () => subscription.unsubscribe();
@@ -158,10 +216,10 @@ export default function App() {
         }));
         alert(`Location verified: Lat ${parseFloat(data[0].lat).toFixed(4)}, Lon ${parseFloat(data[0].lon).toFixed(4)}`);
       } else {
-        alert('Could not find GPS coordinates for this address. Please ensure street name, city, and postal code are accurate.');
+        alert('Could not find GPS coordinates for this address. Please ensure street name and city are accurate.');
       }
-    } catch (err) {
-      alert('Error fetching coordinates. You can enter current location instead.');
+    } catch {
+      alert('Error fetching coordinates. You can set current location instead.');
     } finally {
       setIsGeocoding(false);
     }
@@ -225,12 +283,11 @@ export default function App() {
     }
   };
 
-  // Open Entrance QR Poster using a zero-dependency QR image URL
+  // Encodes the full web link into the QR code poster
   const openQRPoster = (event: any) => {
     setSelectedEventForQR(event);
-    const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=350x350&margin=8&data=${encodeURIComponent(
-      event.qr_secret_token
-    )}`;
+    const deepLinkUrl = `https://3880001.github.io/dynamic-sabha-app/?checkin=${encodeURIComponent(event.qr_secret_token)}`;
+    const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=350x350&margin=8&data=${encodeURIComponent(deepLinkUrl)}`;
     setQrDataUrl(qrUrl);
   };
 
@@ -297,43 +354,16 @@ export default function App() {
     document.body.removeChild(link);
   };
 
-  // QR Scanner with Physical GPS Geofencing Check
+  // In-app QR Scanner: accepts both URL format and raw token
   useEffect(() => {
     if (activeTab !== 'scan') return;
     const scanner = new Html5QrcodeScanner('qr-box', { fps: 10, qrbox: 250 }, false);
 
-    const submitCheckIn = async (qrSecretToken: string, userLat?: number, userLng?: number) => {
-      try {
-        const res = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/checkin`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${session?.access_token}`,
-          },
-          body: JSON.stringify({ qrSecretToken, userLat, userLng }),
-        });
-        const data = await res.json();
-        setScanStatus(data);
-        loadAdminData();
-      } catch (err: any) {
-        setScanStatus({ error: 'Network error checking in.' });
-      }
-    };
-
     scanner.render(
       (decodedText) => {
         scanner.clear();
-        if ('geolocation' in navigator) {
-          navigator.geolocation.getCurrentPosition(
-            (pos) => {
-              submitCheckIn(decodedText, pos.coords.latitude, pos.coords.longitude);
-            },
-            () => submitCheckIn(decodedText),
-            { enableHighAccuracy: true, timeout: 7000 }
-          );
-        } else {
-          submitCheckIn(decodedText);
-        }
+        const cleanToken = extractToken(decodedText);
+        executeCheckIn(cleanToken, session);
       },
       () => {}
     );
@@ -341,7 +371,7 @@ export default function App() {
     return () => {
       scanner.clear().catch(() => {});
     };
-  }, [activeTab]);
+  }, [activeTab, session]);
 
   if (!session) {
     return (
@@ -865,7 +895,7 @@ export default function App() {
             </div>
 
             <p className="text-xs font-serif font-bold text-slate-800">
-              Scan with your phone to mark Sabha attendance
+              Scan with phone camera or Sabha App
             </p>
             <p className="text-[10px] font-mono text-slate-400 mt-1">
               Token: {selectedEventForQR.qr_secret_token}
