@@ -115,11 +115,10 @@ export default function App() {
         }
       }
 
-      if (checkinToken && currentSession) {
-        window.history.replaceState({}, document.title, window.location.pathname);
-        executeCheckIn(checkinToken, currentSession);
-      }
-    };
+      if (checkinToken) {
+  window.history.replaceState({}, document.title, window.location.pathname);
+  executeCheckIn(checkinToken);
+}
 
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session);
