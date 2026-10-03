@@ -28,35 +28,35 @@ serve(async (req) => {
 
     const { qrSecretToken } = await req.json();
 
-    // 1. Verify Event
+    // 1. Fetch Event Details
     const { data: event, error: eventErr } = await supabaseAdmin
       .from("events")
-      .select("event_id, title, venue, sponsor_message")
+      .select("event_id, title, venue, sponsor_message, date_time")
       .eq("qr_secret_token", qrSecretToken)
       .single();
 
     if (eventErr || !event) throw new Error("Invalid or unverified Sabha QR Code");
 
-    // 2. Fetch Profile
+    // 2. Fetch User Profile
     const { data: profile } = await supabaseAdmin
       .from("profiles")
       .select("name, email, sponsor_flag")
       .eq("id", user.id)
       .single();
 
-    // 3. Mark Attendance (Idempotent)
+    // 3. Mark Attendance (Idempotent insert)
     const { error: attError } = await supabaseAdmin
       .from("attendance")
       .insert({
         user_id: user.id,
         event_id: event.event_id,
-        is_sponsor_checkin: profile.sponsor_flag,
+        is_sponsor_checkin: profile?.sponsor_flag ?? false,
       });
 
     const isDuplicate = attError && attError.code === "23505";
 
-    // 4. Send Confirmation / Sponsor Email via Brevo REST API v3
-    if (brevoApiKey && !isDuplicate) {
+    // 4. Send Confirmation / Sponsor Gratitude Email via Brevo
+    if (brevoApiKey && !isDuplicate && profile?.email) {
       let emailHtml = `
         <div style="font-family: Georgia, serif; max-width: 560px; margin: auto; border: 1px solid #E7DECE; background-color: #FAF6F0; padding: 28px; border-radius: 16px; color: #1E293B;">
           <div style="text-align: center; margin-bottom: 20px;">
@@ -67,7 +67,7 @@ serve(async (req) => {
           <div style="background-color: #ffffff; border: 1px solid #E7DECE; border-radius: 12px; padding: 20px; margin-bottom: 20px;">
             <h3 style="color: #781D26; margin-top: 0; font-size: 18px;">Attendance Confirmed</h3>
             <p style="font-size: 14px; line-height: 1.5; color: #334155;">
-              Dear <strong>${profile.name}</strong>, your attendance has been recorded for today’s divine Sabha:
+              Dear <strong>${profile.name}</strong>, your attendance has been recorded for today’s Sabha assembly:
             </p>
             <p style="font-size: 15px; font-weight: bold; color: #1E293B; margin: 12px 0 4px 0;">${event.title}</p>
             <p style="font-size: 13px; color: #64748B; margin: 0;">Venue: ${event.venue}</p>
@@ -97,7 +97,7 @@ serve(async (req) => {
           "content-type": "application/json",
         },
         body: JSON.stringify({
-          sender: { email: brevoSenderEmail, name: "Sabha Assembly" },
+          sender: { email: brevoSenderEmail, name: "BAPS Sabha Assembly" },
           to: [{ email: profile.email, name: profile.name }],
           subject: profile.sponsor_flag
             ? `Jai Swaminarayan: Attendance & Sponsor Gratitude - ${event.title}`
@@ -111,8 +111,8 @@ serve(async (req) => {
       JSON.stringify({
         success: true,
         alreadyCheckedIn: isDuplicate,
-        isSponsor: profile.sponsor_flag,
-        sponsorMessage: profile.sponsor_flag ? event.sponsor_message : null,
+        isSponsor: profile?.sponsor_flag ?? false,
+        sponsorMessage: profile?.sponsor_flag ? event.sponsor_message : null,
         eventTitle: event.title,
       }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }
