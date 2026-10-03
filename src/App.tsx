@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from './supabaseClient';
 import { Html5QrcodeScanner } from 'html5-qrcode';
-import QRCode from 'qrcode';
 import {
   Calendar, MapPin, QrCode, CheckCircle2, HeartHandshake, ShieldCheck,
   UserCheck, LogOut, Sparkles, Users, Download, PlusCircle, Award, ListChecks,
@@ -140,7 +139,6 @@ export default function App() {
     }
   };
 
-  // Free Geocoding: Look up Lat/Lng from Address via OpenStreetMap Nominatim
   const handleGeocodeAddress = async () => {
     if (!newEvent.address.trim()) {
       alert('Please enter a street address first.');
@@ -169,7 +167,6 @@ export default function App() {
     }
   };
 
-  // Helper to use Organizer's current location if currently at the venue
   const handleUseCurrentLocation = () => {
     if ('geolocation' in navigator) {
       navigator.geolocation.getCurrentPosition(
@@ -186,7 +183,6 @@ export default function App() {
     }
   };
 
-  // Organizer: Create New Event
   const handleCreateEvent = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newEvent.address.trim()) {
@@ -229,18 +225,13 @@ export default function App() {
     }
   };
 
-  const openQRPoster = async (event: any) => {
+  // Open Entrance QR Poster using a zero-dependency QR image URL
+  const openQRPoster = (event: any) => {
     setSelectedEventForQR(event);
-    try {
-      const url = await QRCode.toDataURL(event.qr_secret_token, {
-        width: 320,
-        margin: 2,
-        color: { dark: '#1E293B', light: '#FFFFFF' },
-      });
-      setQrDataUrl(url);
-    } catch (err) {
-      console.error(err);
-    }
+    const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=350x350&margin=8&data=${encodeURIComponent(
+      event.qr_secret_token
+    )}`;
+    setQrDataUrl(qrUrl);
   };
 
   const handleUpdateRole = async (targetUserId: string, newRole: string) => {
@@ -428,7 +419,6 @@ export default function App() {
 
   return (
     <div className="max-w-md mx-auto min-h-screen bg-[#FAF6F0] pb-24">
-      {/* Header */}
       <header className="bg-white border-b border-[#E7DECE] px-4 py-3 flex justify-between items-center sticky top-0 z-10">
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 rounded-full bg-gradient-to-br from-[#781D26] to-[#C56B27] flex items-center justify-center text-white">
@@ -456,7 +446,6 @@ export default function App() {
         </button>
       </header>
 
-      {/* Main Container */}
       <main className="p-4">
         {/* TAB 1: SABHA EVENTS FEED */}
         {activeTab === 'events' && (
@@ -481,7 +470,6 @@ export default function App() {
                       <button
                         onClick={() => openQRPoster(ev)}
                         className="flex items-center gap-1 bg-amber-50 hover:bg-amber-100 border border-amber-300 text-[#C56B27] px-2.5 py-1 rounded-lg text-xs font-bold transition"
-                        title="Display Entrance QR Code"
                       >
                         <QrCode className="w-3.5 h-3.5" /> Entrance QR
                       </button>
@@ -676,7 +664,6 @@ export default function App() {
                     />
                   </div>
 
-                  {/* Physical Address & Geotagging */}
                   <div>
                     <div className="flex justify-between items-center">
                       <label className="text-[11px] font-bold text-slate-600 uppercase">Physical Street Address</label>
@@ -699,7 +686,6 @@ export default function App() {
                     />
                   </div>
 
-                  {/* Geofence Coordinates Container */}
                   <div className="p-3 bg-[#FAF6F0] border border-[#E7DECE] rounded-xl space-y-2">
                     <div className="flex justify-between items-center">
                       <span className="text-[10px] font-bold text-slate-700 uppercase">Physical Geofencing</span>
@@ -874,7 +860,7 @@ export default function App() {
               {qrDataUrl ? (
                 <img src={qrDataUrl} alt="Entrance QR Code" className="w-52 h-52 mx-auto" />
               ) : (
-                <div className="w-52 h-52 flex items-center justify-center text-xs text-slate-400">Generating QR...</div>
+                <div className="w-52 h-52 flex items-center justify-center text-xs text-slate-400">Loading QR...</div>
               )}
             </div>
 
