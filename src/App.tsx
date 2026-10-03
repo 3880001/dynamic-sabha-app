@@ -44,10 +44,13 @@ export default function App() {
     e.preventDefault();
     if (isRegistering) {
       const { error } = await supabase.auth.signUp({
-        email: authEmail,
-        password: authPassword,
-        options: { data: { name: authName, role: 'ATTENDEE' } },
-      });
+     email: authEmail,
+     password: authPassword,
+     options: { 
+       data: { name: authName, role: 'ATTENDEE' },
+       emailRedirectTo: 'https://3880001.github.io/dynamic-sabha-app/'
+     },
+   });
       if (error) alert(error.message);
       else alert('Jai Swaminarayan! Registration completed. You can now sign in.');
     } else {
