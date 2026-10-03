@@ -4,7 +4,8 @@ import { Html5QrcodeScanner } from 'html5-qrcode';
 import {
   Calendar, MapPin, QrCode, CheckCircle2, HeartHandshake, ShieldCheck,
   UserCheck, LogOut, Sparkles, Users, Download, PlusCircle, Award, ListChecks,
-  Printer, X, Navigation, Check, Loader2, User, Plus, Trash2, ChevronDown, ChevronUp
+  Printer, X, Navigation, Check, Loader2, User, Plus, Trash2, ChevronDown, ChevronUp,
+  MessageSquare
 } from 'lucide-react';
 
 interface Child {
@@ -40,6 +41,12 @@ export default function App() {
   const [rsvpStats, setRsvpStats] = useState<any[]>([]);
   const [showEventModal, setShowEventModal] = useState(false);
   const [expandedUser, setExpandedUser] = useState<string | null>(null);
+
+  // RSVP Modal State
+  const [rsvpModalEvent, setRsvpModalEvent] = useState<any | null>(null);
+  const [rsvpAdultCount, setRsvpAdultCount] = useState<number>(1);
+  const [rsvpChildCount, setRsvpChildCount] = useState<number>(0);
+  const [rsvpRemarks, setRsvpRemarks] = useState<string>('');
 
   // Live Address Autocomplete State
   const [addressSuggestions, setAddressSuggestions] = useState<any[]>([]);
@@ -205,21 +212,60 @@ export default function App() {
     }
   };
 
-  const handleRSVP = async (eventId: string, status: 'Yes' | 'No' | 'Maybe') => {
+  // RSVP Button Click: "Yes" requires form submission; "Maybe" & "No" submit directly
+  const handleRSVPClick = async (event: any, status: 'Yes' | 'No' | 'Maybe') => {
     if (!session) return;
+    if (status === 'Yes') {
+      setRsvpModalEvent(event);
+      setRsvpAdultCount(1);
+      setRsvpChildCount(0);
+      setRsvpRemarks('');
+    } else {
+      const { error } = await supabase.from('rsvp').upsert({
+        user_id: session.user.id,
+        event_id: event.event_id,
+        status,
+        adult_count: 0,
+        child_count: 0,
+        remarks: null,
+      });
+      if (error) alert(error.message);
+      else {
+        alert(`RSVP recorded: ${status}`);
+        loadAdminData();
+      }
+    }
+  };
+
+  // Submit Completed "Yes" RSVP
+  const handleSubmitYesRSVP = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!session || !rsvpModalEvent) return;
+
+    if (rsvpAdultCount < 1) {
+      alert('Total attendees (above 9 years) must be at least 1.');
+      return;
+    }
+
     const { error } = await supabase.from('rsvp').upsert({
       user_id: session.user.id,
-      event_id: eventId,
-      status,
+      event_id: rsvpModalEvent.event_id,
+      status: 'Yes',
+      adult_count: rsvpAdultCount,
+      child_count: rsvpChildCount || 0,
+      remarks: rsvpRemarks.trim() || null,
     });
-    if (error) alert(error.message);
-    else {
-      alert(`RSVP recorded: ${status}`);
+
+    if (error) {
+      alert(error.message);
+    } else {
+      alert(`Jai Swaminarayan! RSVP confirmed for ${rsvpAdultCount + (rsvpChildCount || 0)} total attendees.`);
+      setRsvpModalEvent(null);
       loadAdminData();
     }
   };
 
-  // Profile Update Handler
+  // Profile Save
   const handleSaveProfile = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!session) return;
@@ -254,15 +300,8 @@ export default function App() {
     }
   };
 
-  // Dynamic Children State Helpers
-  const addChild = () => {
-    setChildren([...children, { name: '', age_dob: '', phone: '' }]);
-  };
-
-  const removeChild = (index: number) => {
-    setChildren(children.filter((_, i) => i !== index));
-  };
-
+  const addChild = () => setChildren([...children, { name: '', age_dob: '', phone: '' }]);
+  const removeChild = (index: number) => setChildren(children.filter((_, i) => i !== index));
   const updateChild = (index: number, field: keyof Child, value: string) => {
     const updated = [...children];
     updated[index] = { ...updated[index], [field]: value };
@@ -405,12 +444,16 @@ export default function App() {
 
   const exportRsvpCSV = () => {
     if (rsvpStats.length === 0) return alert('No RSVP records found to export.');
-    const headers = ['Devotee Name', 'Email', 'Event', 'RSVP Status', 'Submitted At'];
+    const headers = ['Devotee Name', 'Email', 'Event', 'RSVP Status', 'Adults/9+ yrs', 'Children (<9 yrs)', 'Total Count', 'Remarks', 'Submitted At'];
     const rows = rsvpStats.map((r) => [
       `"${r.profiles?.name || ''}"`,
       `"${r.profiles?.email || ''}"`,
       `"${r.events?.title || ''}"`,
       `"${r.status}"`,
+      r.adult_count || (r.status === 'Yes' ? 1 : 0),
+      r.child_count || 0,
+      (r.adult_count || (r.status === 'Yes' ? 1 : 0)) + (r.child_count || 0),
+      `"${r.remarks || ''}"`,
       `"${new Date(r.created_at).toLocaleString()}"`,
     ]);
     const csvContent = 'data:text/csv;charset=utf-8,' + [headers.join(','), ...rows.map((e) => e.join(','))].join('\n');
@@ -507,11 +550,15 @@ export default function App() {
     );
   }
 
-  const confirmedRsvpsCount = rsvpStats.filter((r) => r.status === 'Yes').length;
+  // Calculate total devotees declared across all "Yes" RSVPs
+  const confirmedYesRsvps = rsvpStats.filter((r) => r.status === 'Yes');
+  const totalHeadcount = confirmedYesRsvps.reduce(
+    (sum, r) => sum + (Number(r.adult_count) || 1) + (Number(r.child_count) || 0),
+    0
+  );
 
   return (
     <div className="max-w-md mx-auto min-h-screen bg-[#FAF6F0] pb-24">
-      {/* Header */}
       <header className="bg-white border-b border-[#E7DECE] px-4 py-3 flex justify-between items-center sticky top-0 z-10">
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 rounded-full bg-gradient-to-br from-[#781D26] to-[#C56B27] flex items-center justify-center text-white">
@@ -605,7 +652,7 @@ export default function App() {
                       {(['Yes', 'Maybe', 'No'] as const).map((choice) => (
                         <button
                           key={choice}
-                          onClick={() => handleRSVP(ev.event_id, choice)}
+                          onClick={() => handleRSVPClick(ev, choice)}
                           className="px-3 py-1 bg-[#FAF6F0] hover:bg-[#C56B27] hover:text-white border border-[#E7DECE] rounded-lg text-xs font-semibold text-slate-700 transition"
                         >
                           {choice}
@@ -686,7 +733,6 @@ export default function App() {
             )}
 
             <form onSubmit={handleSaveProfile} className="space-y-4">
-              {/* Primary User Information */}
               <div className="p-3 bg-[#FAF6F0] border border-[#E7DECE] rounded-xl space-y-3">
                 <p className="text-xs font-bold uppercase text-[#781D26]">Personal Information</p>
                 <div>
@@ -720,7 +766,6 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Spouse Information */}
               <div className="p-3 bg-[#FAF6F0] border border-[#E7DECE] rounded-xl space-y-3">
                 <p className="text-xs font-bold uppercase text-[#781D26]">Spouse Information</p>
                 <div>
@@ -757,7 +802,6 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Children Information with Dynamic Add Button */}
               <div className="p-3 bg-[#FAF6F0] border border-[#E7DECE] rounded-xl space-y-3">
                 <div className="flex justify-between items-center">
                   <p className="text-xs font-bold uppercase text-[#781D26]">Children ({children.length})</p>
@@ -830,7 +874,7 @@ export default function App() {
           </div>
         )}
 
-        {/* TAB 4: ADMIN / ORGANIZER DIRECTORY & CONSOLE */}
+        {/* TAB 4: ADMIN & ORGANIZER CONSOLE */}
         {activeTab === 'admin' && (profile?.role === 'SUPER_ADMIN' || profile?.role === 'ORGANIZER') && (
           <div className="space-y-6">
             <div className="grid grid-cols-3 gap-2">
@@ -842,7 +886,8 @@ export default function App() {
               <div className="bg-white border border-[#E7DECE] rounded-2xl p-3 text-center">
                 <ListChecks className="w-4 h-4 text-blue-600 mx-auto mb-1" />
                 <p className="text-[9px] font-bold uppercase text-blue-600">RSVP Yes</p>
-                <p className="text-xl font-black text-blue-700">{confirmedRsvpsCount}</p>
+                <p className="text-xl font-black text-blue-700">{confirmedYesRsvps.length}</p>
+                <p className="text-[9px] text-slate-500 font-semibold mt-0.5">({totalHeadcount} heads)</p>
               </div>
               <div className="bg-white border border-[#E7DECE] rounded-2xl p-3 text-center">
                 <CheckCircle2 className="w-4 h-4 text-emerald-600 mx-auto mb-1" />
@@ -860,13 +905,13 @@ export default function App() {
                     onClick={exportRsvpCSV}
                     className="flex items-center gap-1 px-2.5 py-1 bg-[#FAF6F0] hover:bg-slate-100 border border-[#E7DECE] rounded-lg text-[11px] font-semibold text-slate-700"
                   >
-                    <Download className="w-3.5 h-3.5" /> RSVP CSV
+                    <Download className="w-3 h-3" /> RSVP CSV
                   </button>
                   <button
                     onClick={exportAttendanceCSV}
                     className="flex items-center gap-1 px-2.5 py-1 bg-[#FAF6F0] hover:bg-slate-100 border border-[#E7DECE] rounded-lg text-[11px] font-semibold text-slate-700"
                   >
-                    <Download className="w-3.5 h-3.5" /> Check-In CSV
+                    <Download className="w-3 h-3" /> Check-In CSV
                   </button>
                 </div>
               </div>
@@ -919,7 +964,6 @@ export default function App() {
                     />
                   </div>
 
-                  {/* Physical Street Address with Debounced Live Suggestions */}
                   <div ref={addressWrapperRef} className="relative">
                     <label className="text-[11px] font-bold text-slate-600 uppercase flex items-center justify-between">
                       <span>Physical Street Address</span>
@@ -981,7 +1025,62 @@ export default function App() {
               )}
             </div>
 
-            {/* Devotee Directory: Super Admin (Full) vs Organizer (Read-Only Limited) */}
+            {/* RSVP Roster with Google Form Headcounts and Remarks */}
+            <div className="bg-white border border-[#E7DECE] rounded-2xl p-4">
+              <div className="flex justify-between items-center mb-1">
+                <h3 className="font-serif font-bold text-slate-900 text-sm">RSVP Roster</h3>
+                <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-200">
+                  {totalHeadcount} Total Expected
+                </span>
+              </div>
+              <p className="text-[11px] text-slate-500 mb-3">Devotees who have submitted attendance intentions and headcounts.</p>
+
+              {rsvpStats.length === 0 ? (
+                <p className="text-xs text-slate-400 py-3 text-center">No RSVP submissions recorded yet.</p>
+              ) : (
+                <div className="space-y-2">
+                  {rsvpStats.map((r) => {
+                    const adults = r.adult_count || (r.status === 'Yes' ? 1 : 0);
+                    const kids = r.child_count || 0;
+                    const totalDevotees = adults + kids;
+
+                    return (
+                      <div key={r.rsvp_id} className="p-3 bg-[#FAF6F0] border border-[#E7DECE] rounded-xl flex flex-col gap-1.5 text-xs">
+                        <div className="flex justify-between items-start">
+                          <div>
+                            <p className="font-bold text-slate-900">{r.profiles?.name || 'Devotee'}</p>
+                            <p className="text-[10px] text-slate-500">{r.events?.title}</p>
+                          </div>
+                          <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                            r.status === 'Yes' ? 'bg-emerald-100 text-emerald-800' :
+                            r.status === 'Maybe' ? 'bg-amber-100 text-amber-800' : 'bg-slate-200 text-slate-600'
+                          }`}>
+                            {r.status}
+                          </span>
+                        </div>
+
+                        {r.status === 'Yes' && (
+                          <div className="flex flex-wrap gap-2 text-[10px] text-slate-600 bg-white p-2 rounded-lg border border-[#E7DECE]">
+                            <span>Adults (9+ yrs): <strong>{adults}</strong></span>
+                            <span>• Children (&lt;9 yrs): <strong>{kids}</strong></span>
+                            <span>• Total: <strong className="text-emerald-700 font-bold">{totalDevotees}</strong></span>
+                          </div>
+                        )}
+
+                        {r.remarks && (
+                          <div className="text-[10px] text-slate-600 flex items-start gap-1 bg-amber-50/60 p-1.5 rounded border border-amber-200/50 italic">
+                            <MessageSquare className="w-3 h-3 text-[#C56B27] shrink-0 mt-0.5" />
+                            <span>"{r.remarks}"</span>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            {/* Devotee Directory */}
             <div className="bg-white border border-[#E7DECE] rounded-2xl p-4">
               <div className="flex justify-between items-center mb-1">
                 <h3 className="font-serif font-bold text-slate-900 text-sm">Devotee Directory & Family Records</h3>
@@ -1034,7 +1133,6 @@ export default function App() {
                         )}
                       </div>
 
-                      {/* Organizer Limited View: Quick family summary */}
                       {profile?.role === 'ORGANIZER' && (
                         <div className="text-[11px] text-slate-600 pt-1 border-t border-[#E7DECE]/60 flex gap-3">
                           <span>Spouse: <strong>{u.spouse_name || 'None listed'}</strong></span>
@@ -1042,7 +1140,6 @@ export default function App() {
                         </div>
                       )}
 
-                      {/* Super Admin Full View: Expandable Family Breakdown */}
                       {profile?.role === 'SUPER_ADMIN' && (
                         <>
                           <button
@@ -1100,7 +1197,7 @@ export default function App() {
               </div>
             </div>
 
-            {/* Active QR Posters */}
+            {/* Active Assembly QR Codes */}
             <div className="bg-white border border-[#E7DECE] rounded-2xl p-4">
               <h3 className="font-serif font-bold text-slate-900 text-sm mb-1">Active Assembly QR Codes</h3>
               <p className="text-[11px] text-slate-500 mb-3">Launch or print the entrance check-in poster for attendees.</p>
@@ -1122,36 +1219,91 @@ export default function App() {
                 ))}
               </div>
             </div>
-
-            {/* RSVP Roster Section */}
-            <div className="bg-white border border-[#E7DECE] rounded-2xl p-4">
-              <h3 className="font-serif font-bold text-slate-900 text-sm mb-1">RSVP Roster</h3>
-              <p className="text-[11px] text-slate-500 mb-3">Devotees who have submitted their attendance intention.</p>
-
-              {rsvpStats.length === 0 ? (
-                <p className="text-xs text-slate-400 py-3 text-center">No RSVP submissions recorded yet.</p>
-              ) : (
-                <div className="space-y-2">
-                  {rsvpStats.map((r) => (
-                    <div key={r.rsvp_id} className="p-2.5 bg-[#FAF6F0] border border-[#E7DECE] rounded-xl flex justify-between items-center text-xs">
-                      <div>
-                        <p className="font-bold text-slate-900">{r.profiles?.name || 'Devotee'}</p>
-                        <p className="text-[10px] text-slate-500">{r.events?.title}</p>
-                      </div>
-                      <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                        r.status === 'Yes' ? 'bg-emerald-100 text-emerald-800' :
-                        r.status === 'Maybe' ? 'bg-amber-100 text-amber-800' : 'bg-slate-200 text-slate-600'
-                      }`}>
-                        {r.status}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
           </div>
         )}
       </main>
+
+      {/* RSVP QUESTIONNAIRE MODAL FOR "YES" SUBMISSIONS */}
+      {rsvpModalEvent && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-[#FAF6F0] border-2 border-[#C56B27] rounded-3xl p-6 w-full max-w-sm shadow-2xl relative">
+            <button
+              onClick={() => setRsvpModalEvent(null)}
+              className="absolute top-4 right-4 p-2 bg-slate-200 hover:bg-slate-300 rounded-full text-slate-700"
+            >
+              <X className="w-4 h-4" />
+            </button>
+
+            <div className="w-10 h-10 mb-2 rounded-full bg-gradient-to-tr from-[#781D26] to-[#C56B27] flex items-center justify-center text-white shadow">
+              <Sparkles className="w-5 h-5 text-amber-200" />
+            </div>
+
+            <p className="text-[10px] font-bold uppercase tracking-wider text-[#C56B27]">Sabha Attendance RSVP</p>
+            <h2 className="text-lg font-serif font-black text-[#781D26] mt-0.5">{rsvpModalEvent.title}</h2>
+            <p className="text-xs text-slate-600 mb-4">Please submit attendee details to complete your RSVP.</p>
+
+            <form onSubmit={handleSubmitYesRSVP} className="space-y-3.5 text-left">
+              <div>
+                <label className="text-xs font-bold text-slate-800 flex items-center justify-between">
+                  <span>1. Attendees (above 9 yrs, including you) <span className="text-red-500">*</span></span>
+                </label>
+                <input
+                  type="number"
+                  min="1"
+                  max="30"
+                  required
+                  value={rsvpAdultCount}
+                  onChange={(e) => setRsvpAdultCount(Math.max(1, parseInt(e.target.value) || 1))}
+                  className="w-full mt-1 px-3 py-2 border rounded-xl text-xs bg-white focus:outline-none focus:border-[#C56B27]"
+                />
+              </div>
+
+              <div>
+                <label className="text-xs font-bold text-slate-800">
+                  2. Child Attendees (below 9 yrs)
+                </label>
+                <input
+                  type="number"
+                  min="0"
+                  max="20"
+                  value={rsvpChildCount}
+                  onChange={(e) => setRsvpChildCount(Math.max(0, parseInt(e.target.value) || 0))}
+                  className="w-full mt-1 px-3 py-2 border rounded-xl text-xs bg-white focus:outline-none focus:border-[#C56B27]"
+                />
+              </div>
+
+              <div>
+                <label className="text-xs font-bold text-slate-800">
+                  3. Any Remark / Note <span className="text-slate-400 font-normal">(Optional)</span>
+                </label>
+                <textarea
+                  rows={2}
+                  placeholder="Leave any message or dietary note for organizers..."
+                  value={rsvpRemarks}
+                  onChange={(e) => setRsvpRemarks(e.target.value)}
+                  className="w-full mt-1 px-3 py-2 border rounded-xl text-xs bg-white focus:outline-none focus:border-[#C56B27]"
+                />
+              </div>
+
+              <div className="pt-2 flex gap-2">
+                <button
+                  type="submit"
+                  className="flex-1 py-2.5 bg-gradient-to-r from-[#C56B27] to-[#781D26] text-white rounded-xl text-xs font-bold shadow hover:opacity-95"
+                >
+                  Submit & Confirm RSVP
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setRsvpModalEvent(null)}
+                  className="px-4 py-2.5 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-xl text-xs font-bold"
+                >
+                  Cancel
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
       {/* ENTRANCE QR POSTER MODAL */}
       {selectedEventForQR && (
@@ -1208,7 +1360,7 @@ export default function App() {
         </div>
       )}
 
-      {/* Navigation Footer */}
+      {/* Footer Navigation */}
       <footer className="fixed bottom-0 left-0 right-0 max-w-md mx-auto bg-white border-t border-[#E7DECE] flex justify-around py-3 z-20">
         <button
           onClick={() => setActiveTab('events')}
