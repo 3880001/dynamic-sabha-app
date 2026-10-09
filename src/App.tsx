@@ -110,7 +110,7 @@ export default function App() {
         return url.searchParams.get('checkin') || scannedText;
       }
     } catch {
-      // ignore
+      // fallback
     }
     return scannedText.trim();
   };
@@ -388,7 +388,7 @@ export default function App() {
     if (data) {
       setEvents(data);
       if (data.length > 0) {
-        setSelectedAdminEventId((prev) => prev && data.some((e) => e.event_id === prev) ? prev : data[0].event_id);
+        setSelectedAdminEventId((prev) => (prev && data.some((e) => e.event_id === prev) ? prev : data[0].event_id));
       }
     }
     loadEventSponsors();
@@ -1960,9 +1960,10 @@ export default function App() {
                 {allUsers.map((u) => {
                   const userChildren: Child[] = Array.isArray(u.children) ? u.children : [];
                   const isExpanded = expandedUser === u.id;
-                  const isSponsorForSelected = currentlySelectedEvent
-                    ? (eventSponsors[currentlySelectedEvent.event_id] || []).some((sp) => sp.id === u.id)
-                    : false;
+                  const isSponsorForSelected = Boolean(
+                    currentlySelectedEvent &&
+                    (eventSponsors[currentlySelectedEvent.event_id] || []).some((sp) => sp.id === u.id)
+                  );
 
                   return (
                     <div key={u.id} className="p-3 bg-[#FAF6F0] border border-[#E7DECE] rounded-xl flex flex-col gap-2">
@@ -1982,11 +1983,11 @@ export default function App() {
                             <button
                               type="button"
                               onClick={() => handleToggleEventSponsor(currentlySelectedEvent.event_id, u.id, isSponsorForSelected)}
-                              className={`px-2 py-1 rounded text-[10px] font-bold flex items-center gap-1 transition ${
+                              className={
                                 isSponsorForSelected
-                                  ? 'bg-amber-100 text-amber-900 border border-amber-300'
-                                  : 'bg-slate-200 text-slate-600 hover:bg-amber-50'
-                              }`}
+                                  ? 'px-2 py-1 rounded text-[10px] font-bold flex items-center gap-1 transition bg-amber-100 text-amber-900 border border-amber-300'
+                                  : 'px-2 py-1 rounded text-[10px] font-bold flex items-center gap-1 transition bg-slate-200 text-slate-600 hover:bg-amber-50'
+                              }
                               title={`Tag as sponsor for ${currentlySelectedEvent.title}`}
                             >
                               <Star className={`w-3 h-3 ${isSponsorForSelected ? 'fill-amber-500 text-amber-500' : ''}`} />
