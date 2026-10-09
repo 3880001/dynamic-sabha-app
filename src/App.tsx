@@ -3,7 +3,7 @@ import { supabase } from './supabaseClient';
 import { Html5QrcodeScanner } from 'html5-qrcode';
 import {
   Calendar, MapPin, QrCode, CheckCircle2, HeartHandshake, ShieldCheck,
-  UserCheck, LogOut, Sparkles, Users, Download, PlusCircle, Award, ListChecks,
+  UserCheck, LogOut, Users, Download, PlusCircle, Award, ListChecks,
   Printer, X, Navigation, Check, Loader2, User, Plus, Trash2, ChevronDown, ChevronUp,
   MessageSquare, Image as ImageIcon, UploadCloud, Edit3, Lock, Mail, BellRing,
   KeyRound, Share2, Copy, AlertTriangle, Star, UserPlus
@@ -14,6 +14,19 @@ interface Child {
   age_dob: string;
   phone?: string;
 }
+
+// Custom Portal Logo Component using the provided devotee floral hands artwork
+const AppLogo = ({ className = "w-10 h-10" }: { className?: string }) => (
+  <img
+    src="./logo.png"
+    alt="My Sabha Portal Logo"
+    className={`${className} object-contain drop-shadow-sm`}
+    onError={(e) => {
+      // Graceful fallback to inline image if local file is missing
+      (e.target as HTMLImageElement).src = "https://3880001.github.io/dynamic-sabha-app/logo.png";
+    }}
+  />
+);
 
 export default function App() {
   const [session, setSession] = useState<any>(null);
@@ -219,13 +232,11 @@ export default function App() {
     if (!confirmDelete) return;
 
     try {
-      // First try via RPC to completely wipe auth user; fallback to profile deletion
       const { error: rpcError } = await supabase.rpc('delete_user_by_admin', {
         target_user_id: targetUserId,
       });
 
       if (rpcError) {
-        // Fallback: Delete directly from profiles table
         const { error: deleteError } = await supabase
           .from('profiles')
           .delete()
@@ -461,10 +472,9 @@ export default function App() {
     }
   }, [events, userRsvps, unlockedEventIds, session, profile, sponsorGratitudeEvent]);
 
-  // Check missing family info reminder pop-up (Triggers only if no RSVP pop-up is active)
+  // Check missing family info reminder pop-up
   useEffect(() => {
     if (!session || !profile) return;
-    // Condition: User has not filled spouse name and has 0 children
     const hasSpouse = profile.spouse_name && profile.spouse_name.trim().length > 0;
     const hasChildren = Array.isArray(profile.children) && profile.children.length > 0;
     const reminderDismissed = sessionStorage.getItem(`family_reminder_seen_${session.user.id}`);
@@ -473,7 +483,7 @@ export default function App() {
       const timer = setTimeout(() => {
         setShowFamilyReminderPopup(true);
         sessionStorage.setItem(`family_reminder_seen_${session.user.id}`, 'true');
-      }, 1200); // 1.2s delay for gentle entrance
+      }, 1200);
       return () => clearTimeout(timer);
     }
   }, [session, profile, showPendingRsvpPopup, sponsorGratitudeEvent]);
@@ -525,7 +535,7 @@ export default function App() {
         alert(error.message);
       } else {
         if (data.session) {
-          alert('Registration successful! Welcome to the Sabha Portal.');
+          alert('Registration successful! Welcome to My Sabha Portal.');
           if (pendingCode) {
             await handleJoinByCode(pendingCode, false);
           }
@@ -899,11 +909,11 @@ export default function App() {
     return (
       <div className="min-h-screen bg-[#FAF6F0] flex flex-col justify-center items-center px-4 py-8">
         <div className="w-full max-w-sm bg-white border border-[#E7DECE] rounded-3xl p-6 shadow-md text-center">
-          <div className="w-16 h-16 mx-auto mb-3 rounded-full bg-gradient-to-tr from-[#781D26] to-[#C56B27] flex items-center justify-center text-white shadow-inner">
-            <Sparkles className="w-8 h-8 text-amber-200" />
+          <div className="w-20 h-20 mx-auto mb-3 flex items-center justify-center">
+            <AppLogo className="w-20 h-20" />
           </div>
           <span className="text-xs uppercase tracking-widest font-bold text-[#C56B27]">BAPS Swaminarayan Sanstha</span>
-          <h1 className="text-2xl font-serif font-bold text-[#781D26] mt-1">Dynamic Sabha Portal</h1>
+          <h1 className="text-2xl font-serif font-bold text-[#781D26] mt-1">My Sabha Portal</h1>
           <p className="text-xs text-slate-500 mt-1 mb-4">Attendance & Event Check-In</p>
 
           {storedPendingCode && (
@@ -997,8 +1007,8 @@ export default function App() {
       {/* Header */}
       <header className="bg-white border-b border-[#E7DECE] px-4 py-3 flex justify-between items-center sticky top-0 z-10">
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-full bg-gradient-to-br from-[#781D26] to-[#C56B27] flex items-center justify-center text-white">
-            <Sparkles className="w-5 h-5 text-amber-200" />
+          <div className="w-10 h-10 flex items-center justify-center">
+            <AppLogo className="w-10 h-10" />
           </div>
           <div>
             <p className="text-[10px] font-bold tracking-wider uppercase text-[#C56B27]">Jai Swaminarayan</p>
@@ -1837,7 +1847,7 @@ export default function App() {
                   className="flex-1 py-2 px-2.5 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-xl text-[11px] font-bold hover:bg-emerald-100 flex items-center justify-center gap-1.5"
                 >
                   <BellRing className="w-3.5 h-3.5" />
-                  {isSendingReminder ? 'Sending...' : 'Send Door Check-In Notice'}
+                  {isSendingReminder ? 'Send Door Check-In Notice'}
                 </button>
               </div>
 
@@ -2169,8 +2179,8 @@ export default function App() {
               <X className="w-4 h-4" />
             </button>
 
-            <div className="w-12 h-12 mx-auto mb-2 rounded-full bg-gradient-to-tr from-[#781D26] to-[#C56B27] flex items-center justify-center text-white shadow">
-              <UserPlus className="w-6 h-6 text-amber-200" />
+            <div className="w-16 h-16 mx-auto mb-2 flex items-center justify-center">
+              <AppLogo className="w-16 h-16" />
             </div>
 
             <p className="text-[10px] font-bold uppercase tracking-wider text-[#C56B27]">Profile Incomplete</p>
@@ -2254,8 +2264,8 @@ export default function App() {
               <X className="w-4 h-4" />
             </button>
 
-            <div className="w-12 h-12 mx-auto mb-2 rounded-full bg-gradient-to-tr from-[#781D26] to-[#C56B27] flex items-center justify-center text-white shadow">
-              <KeyRound className="w-6 h-6 text-amber-200" />
+            <div className="w-16 h-16 mx-auto mb-2 flex items-center justify-center">
+              <AppLogo className="w-16 h-16" />
             </div>
 
             <p className="text-[10px] font-bold uppercase tracking-wider text-[#C56B27]">Event Access</p>
@@ -2312,8 +2322,8 @@ export default function App() {
               <X className="w-4 h-4" />
             </button>
 
-            <div className="w-12 h-12 mx-auto mb-2 rounded-full bg-gradient-to-tr from-[#781D26] to-[#C56B27] flex items-center justify-center text-white shadow">
-              <Sparkles className="w-6 h-6 text-amber-200" />
+            <div className="w-16 h-16 mx-auto mb-2 flex items-center justify-center">
+              <AppLogo className="w-16 h-16" />
             </div>
 
             <p className="text-[10px] font-bold uppercase tracking-wider text-[#C56B27]">Upcoming Assembly Reminder</p>
@@ -2389,8 +2399,8 @@ export default function App() {
               <X className="w-4 h-4" />
             </button>
 
-            <div className="w-10 h-10 mb-2 rounded-full bg-gradient-to-tr from-[#781D26] to-[#C56B27] flex items-center justify-center text-white shadow">
-              <Sparkles className="w-5 h-5 text-amber-200" />
+            <div className="w-14 h-14 mb-2 mx-auto flex items-center justify-center">
+              <AppLogo className="w-14 h-14" />
             </div>
 
             <p className="text-[10px] font-bold uppercase tracking-wider text-[#C56B27]">Sabha Attendance RSVP</p>
@@ -2471,8 +2481,8 @@ export default function App() {
               <X className="w-4 h-4" />
             </button>
 
-            <div className="w-12 h-12 mx-auto mb-2 rounded-full bg-gradient-to-tr from-[#781D26] to-[#C56B27] flex items-center justify-center text-white shadow">
-              <Sparkles className="w-6 h-6 text-amber-200" />
+            <div className="w-16 h-16 mx-auto mb-2 flex items-center justify-center">
+              <AppLogo className="w-16 h-16" />
             </div>
 
             <p className="text-[10px] font-bold uppercase tracking-wider text-[#C56B27]">BAPS Swaminarayan Sanstha</p>
