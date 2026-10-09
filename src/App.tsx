@@ -6,7 +6,7 @@ import {
   UserCheck, LogOut, Sparkles, Users, Download, PlusCircle, Award, ListChecks,
   Printer, X, Navigation, Check, Loader2, User, Plus, Trash2, ChevronDown, ChevronUp,
   MessageSquare, Image as ImageIcon, UploadCloud, Edit3, Lock, Mail, BellRing,
-  KeyRound, Share2, Copy, AlertTriangle
+  KeyRound, Share2, Copy, AlertTriangle, Star
 } from 'lucide-react';
 
 interface Child {
@@ -21,6 +21,7 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<'events' | 'scan' | 'profile' | 'admin'>('events');
   const [events, setEvents] = useState<any[]>([]);
   const [unlockedEventIds, setUnlockedEventIds] = useState<Set<string>>(new Set());
+  const [eventSponsors, setEventSponsors] = useState<Record<string, any[]>>({});
   const [userRsvps, setUserRsvps] = useState<Record<string, any>>({});
   const [authEmail, setAuthEmail] = useState('');
   const [authPassword, setAuthPassword] = useState('');
@@ -33,6 +34,9 @@ export default function App() {
   const [showJoinCodeModal, setShowJoinCodeModal] = useState(false);
   const [inputJoinCode, setInputJoinCode] = useState('');
   const [isJoiningEvent, setIsJoiningEvent] = useState(false);
+
+  // Sponsor Gratitude Pop-Up Modal State (For Devotees)
+  const [sponsorGratitudeEvent, setSponsorGratitudeEvent] = useState<any | null>(null);
 
   // Profile Edit State
   const [editName, setEditName] = useState('');
@@ -138,7 +142,6 @@ export default function App() {
     }
   };
 
-  // Join Event by Code (Unlocks and updates access list)
   const handleJoinByCode = async (codeToUnlock: string, showToast = true) => {
     if (!codeToUnlock || !codeToUnlock.trim()) return;
     setIsJoiningEvent(true);
@@ -153,7 +156,6 @@ export default function App() {
         if (showToast) alert(`Event unlocked: "${data.title}"!`);
         setShowJoinCodeModal(false);
         setInputJoinCode('');
-        // Remove pending code once successfully processed
         localStorage.removeItem('pending_join_code');
 
         const { data: { session: currentSession } } = await supabase.auth.getSession();
@@ -245,12 +247,10 @@ export default function App() {
       const checkinToken = params.get('checkin');
       const joinParam = params.get('join');
 
-      // 1. If someone clicks a WhatsApp link, store the join code persistently
       if (joinParam) {
         localStorage.setItem('pending_join_code', joinParam.trim().toUpperCase());
       }
 
-      // 2. Handle Supabase email confirmation
       if (token_hash && type) {
         const { error } = await supabase.auth.verifyOtp({ token_hash, type });
         if (!error) {
@@ -259,7 +259,6 @@ export default function App() {
         }
       }
 
-      // 3. Handle printed QR checkin
       if (checkinToken) {
         window.history.replaceState({}, document.title, window.location.pathname);
         if (currentSession) {
@@ -267,7 +266,6 @@ export default function App() {
         }
       }
 
-      // 4. If session is ready, process pending join code immediately
       const codeToUnlock = joinParam || localStorage.getItem('pending_join_code');
       if (codeToUnlock && currentSession) {
         window.history.replaceState({}, document.title, window.location.pathname);
@@ -295,7 +293,6 @@ export default function App() {
         fetchUserRsvps(newSession.user.id);
         handleUrlParams(newSession);
 
-        // Check if there's a stored join code after login or signup
         const storedJoinCode = localStorage.getItem('pending_join_code');
         if (storedJoinCode) {
           await handleJoinByCode(storedJoinCode, false);
@@ -346,12 +343,33 @@ export default function App() {
   };
 
   const loadEvents = async () => {
-    const { data } = await supabase.from('events').select('*, profiles:deletion_requested_by(name, email)').order('date_time', { ascending: true });
+    const { data } = await supabase
+      .from('events')
+      .select('*, profiles:deletion_requested_by(name, email)')
+      .order('date_time', { ascending: true });
+
     if (data) {
       setEvents(data);
       if (data.length > 0) {
         setSelectedAdminEventId((prev) => prev && data.some((e) => e.event_id === prev) ? prev : data[0].event_id);
       }
+    }
+    loadEventSponsors();
+  };
+
+  // Fetch sponsors grouped by event
+  const loadEventSponsors = async () => {
+    const { data } = await supabase
+      .from('event_sponsors')
+      .select('event_id, user_id, profiles(id, name, email)');
+
+    if (data) {
+      const map: Record<string, any[]> = {};
+      data.forEach((row: any) => {
+        if (!map[row.event_id]) map[row.event_id] = [];
+        if (row.profiles) map[row.event_id].push(row.profiles);
+      });
+      setEventSponsors(map);
     }
   };
 
@@ -366,6 +384,25 @@ export default function App() {
     if (rsvps) setRsvpStats(rsvps);
   };
 
+  // Trigger gratitude pop-up if the attendee is designated as a sponsor for an upcoming event
+  useEffect(() => {
+    if (!session || events.length === 0) return;
+    const now = Date.now();
+    for (const ev of events) {
+      if (new Date(ev.date_time).getTime() > now) {
+        const sponsorsList = eventSponsors[ev.event_id] || [];
+        const isSponsor = sponsorsList.some((s) => s.id === session.user.id) || profile?.sponsor_flag;
+        const dismissedKey = `sponsor_thanks_seen_${ev.event_id}_${session.user.id}`;
+        if (isSponsor && !sessionStorage.getItem(dismissedKey)) {
+          setSponsorGratitudeEvent(ev);
+          sessionStorage.setItem(dismissedKey, 'true');
+          break;
+        }
+      }
+    }
+  }, [events, eventSponsors, session, profile]);
+
+  // Check upcoming event to trigger in-app pop-up if RSVP is pending
   useEffect(() => {
     if (!session || events.length === 0) return;
     const now = Date.now();
@@ -375,16 +412,42 @@ export default function App() {
       return isFuture && isAccessible && !userRsvps[ev.event_id];
     });
 
-    if (upcoming) {
+    if (upcoming && !sponsorGratitudeEvent) {
       setPopupEvent(upcoming);
       setShowPendingRsvpPopup(true);
     }
-  }, [events, userRsvps, unlockedEventIds, session, profile]);
+  }, [events, userRsvps, unlockedEventIds, session, profile, sponsorGratitudeEvent]);
+
+  // Toggle user as a sponsor for a specific event
+  const handleToggleEventSponsor = async (eventId: string, userId: string, currentlyAssigned: boolean) => {
+    if (profile?.role !== 'SUPER_ADMIN' && profile?.role !== 'ORGANIZER') {
+      alert('Only Organizers and Super Admins can assign event sponsors.');
+      return;
+    }
+
+    if (currentlyAssigned) {
+      const { error } = await supabase
+        .from('event_sponsors')
+        .delete()
+        .eq('event_id', eventId)
+        .eq('user_id', userId);
+      if (error) alert(error.message);
+      else loadEventSponsors();
+    } else {
+      const { error } = await supabase
+        .from('event_sponsors')
+        .insert({ event_id: eventId, user_id: userId });
+      if (error) alert(error.message);
+      else {
+        alert('Devotee designated as sponsor for this assembly!');
+        loadEventSponsors();
+      }
+    }
+  };
 
   const handleAuth = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    // Preserve join code in case email confirmation redirects the user
     const pendingCode = localStorage.getItem('pending_join_code');
     const redirectUrl = pendingCode
       ? `https://3880001.github.io/dynamic-sabha-app/?join=${encodeURIComponent(pendingCode)}`
@@ -403,7 +466,6 @@ export default function App() {
         alert(error.message);
       } else {
         if (data.session) {
-          // If Supabase has email confirmation disabled, user signs in immediately
           alert('Registration successful! Welcome to the Sabha Portal.');
           if (pendingCode) {
             await handleJoinByCode(pendingCode, false);
@@ -420,7 +482,6 @@ export default function App() {
       if (error) {
         alert(error.message);
       } else if (data.session) {
-        // Automatically unlock event if a join code was stored prior to sign-in
         if (pendingCode) {
           await handleJoinByCode(pendingCode, false);
         }
@@ -702,7 +763,7 @@ export default function App() {
 
   const handleToggleSponsor = async (targetUserId: string, currentStatus: boolean) => {
     if (profile?.role !== 'SUPER_ADMIN') {
-      alert('Only Sabha Super Admins can manage sponsor tags.');
+      alert('Only Sabha Super Admins can manage global sponsor tags.');
       return;
     }
     const { error } = await supabase.from('profiles').update({ sponsor_flag: !currentStatus }).eq('id', targetUserId);
@@ -772,7 +833,6 @@ export default function App() {
     };
   }, [activeTab]);
 
-  // Read stored join code to show a welcoming banner if user opened an invite link
   const storedPendingCode = typeof window !== 'undefined' ? localStorage.getItem('pending_join_code') : null;
 
   if (!session) {
@@ -786,7 +846,6 @@ export default function App() {
           <h1 className="text-2xl font-serif font-bold text-[#781D26] mt-1">Dynamic Sabha Portal</h1>
           <p className="text-xs text-slate-500 mt-1 mb-4">Attendance & Event Check-In</p>
 
-          {/* Pending Event Banner */}
           {storedPendingCode && (
             <div className="mb-4 p-2.5 bg-amber-50 border border-amber-200 text-amber-800 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5">
               <KeyRound className="w-3.5 h-3.5 text-[#C56B27]" />
@@ -855,7 +914,6 @@ export default function App() {
     );
   }
 
-  // Filter events: Admins see all future events. Devotees see future events they unlocked.
   const visibleEvents = events.filter((ev) => {
     const isFuture = new Date(ev.date_time).getTime() > Date.now();
     if (!isFuture) return false;
@@ -939,6 +997,7 @@ export default function App() {
                 const isEditing = editingRsvpEventId === ev.event_id;
                 const lockedToday = isCompleted && isRsvpSubmittedToday(userRsvp.created_at);
                 const isStaff = isSuperAdmin || isOrganizer;
+                const currentEventSponsors = eventSponsors[ev.event_id] || [];
 
                 return (
                   <div key={ev.event_id} className="bg-white border border-[#E7DECE] rounded-2xl p-4 shadow-sm overflow-hidden relative">
@@ -970,6 +1029,23 @@ export default function App() {
                           )}
                         </div>
 
+                        {/* Event Sponsors Display on Card */}
+                        {currentEventSponsors.length > 0 && (
+                          <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                            <span className="text-[10px] font-bold text-amber-900 uppercase tracking-wider flex items-center gap-1">
+                              <Star className="w-3 h-3 fill-amber-500 text-amber-500" /> Sponsors:
+                            </span>
+                            {currentEventSponsors.map((sp: any) => (
+                              <span
+                                key={sp.id}
+                                className="text-[10px] font-bold text-amber-900 bg-amber-100/80 border border-amber-300 px-2 py-0.5 rounded-full"
+                              >
+                                {sp.name}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+
                         {/* Sabha Code is visible only to Super Admins & Organizers */}
                         {isStaff && ev.join_code && (
                           <div className="flex flex-wrap items-center gap-2 mt-1.5">
@@ -1000,7 +1076,6 @@ export default function App() {
                             <QrCode className="w-3.5 h-3.5" /> QR
                           </button>
 
-                          {/* Super Admin Direct Delete */}
                           {isSuperAdmin && (
                             <button
                               type="button"
@@ -1012,7 +1087,6 @@ export default function App() {
                             </button>
                           )}
 
-                          {/* Organizer Request Deletion */}
                           {isOrganizer && !ev.deletion_requested && (
                             <button
                               type="button"
@@ -1654,6 +1728,37 @@ export default function App() {
                 </select>
               </div>
 
+              {/* Current Event Sponsors Tagging Row */}
+              {currentlySelectedEvent && (
+                <div className="p-3 bg-[#FAF6F0] border border-[#E7DECE] rounded-xl space-y-2">
+                  <div className="flex justify-between items-center">
+                    <span className="text-[11px] font-bold uppercase text-[#781D26] flex items-center gap-1">
+                      <Star className="w-3.5 h-3.5 text-amber-500 fill-amber-500" /> Event Sponsors ({(eventSponsors[currentlySelectedEvent.event_id] || []).length})
+                    </span>
+                  </div>
+
+                  {(eventSponsors[currentlySelectedEvent.event_id] || []).length === 0 ? (
+                    <p className="text-[10px] text-slate-400 italic">No sponsors assigned to this event yet. Use the directory below to tag devotees as sponsors.</p>
+                  ) : (
+                    <div className="flex flex-wrap gap-1.5">
+                      {(eventSponsors[currentlySelectedEvent.event_id] || []).map((sp: any) => (
+                        <span key={sp.id} className="text-[10px] font-bold text-amber-900 bg-amber-100 border border-amber-300 px-2 py-0.5 rounded-full flex items-center gap-1">
+                          {sp.name}
+                          <button
+                            type="button"
+                            onClick={() => handleToggleEventSponsor(currentlySelectedEvent.event_id, sp.id, true)}
+                            className="text-amber-800 hover:text-red-700 ml-0.5"
+                            title="Remove sponsor tag"
+                          >
+                            ×
+                          </button>
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+
               {/* Action Buttons to Email Pending Attendees */}
               <div className="flex flex-wrap gap-2 pt-1">
                 <button
@@ -1808,24 +1913,27 @@ export default function App() {
               })()}
             </div>
 
-            {/* Devotee Directory */}
+            {/* Devotee Directory & Sponsor Management */}
             <div className="bg-white border border-[#E7DECE] rounded-2xl p-4">
               <div className="flex justify-between items-center mb-1">
-                <h3 className="font-serif font-bold text-slate-900 text-sm">Devotee Directory & Family Records</h3>
+                <h3 className="font-serif font-bold text-slate-900 text-sm">Devotee Directory & Sponsor Management</h3>
                 <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-amber-100 text-[#C56B27]">
                   {isSuperAdmin ? 'Full Access' : 'Organizer Limited View'}
                 </span>
               </div>
               <p className="text-[11px] text-slate-500 mb-3">
                 {isSuperAdmin
-                  ? 'Manage roles, view complete family records, and designate sponsors.'
-                  : 'Read-only directory of devotees with basic contact and family count.'}
+                  ? 'Manage roles, view family records, and assign devotees as sponsors for the selected event.'
+                  : 'Read-only directory of devotees with basic contact, family count, and sponsor tagging.'}
               </p>
 
               <div className="space-y-3">
                 {allUsers.map((u) => {
                   const userChildren: Child[] = Array.isArray(u.children) ? u.children : [];
                   const isExpanded = expandedUser === u.id;
+                  const isSponsorForSelected = currentlySelectedEvent
+                    ? (eventSponsors[currentlySelectedEvent.event_id] || []).some((sp) => sp.id === u.id)
+                    : false;
 
                   return (
                     <div key={u.id} className="p-3 bg-[#FAF6F0] border border-[#E7DECE] rounded-xl flex flex-col gap-2">
@@ -1840,24 +1948,21 @@ export default function App() {
                           {u.phone && <p className="text-[10px] text-slate-600">📞 {u.phone}</p>}
                         </div>
 
-                        {isSuperAdmin ? (
+                        {/* Event Sponsor Tagging Button */}
+                        {currentlySelectedEvent && (
                           <button
-                            onClick={() => handleToggleSponsor(u.id, u.sponsor_flag)}
+                            type="button"
+                            onClick={() => handleToggleEventSponsor(currentlySelectedEvent.event_id, u.id, isSponsorForSelected)}
                             className={`px-2 py-1 rounded text-[10px] font-bold flex items-center gap-1 transition ${
-                              u.sponsor_flag
-                                ? 'bg-amber-100 text-amber-800 border border-amber-300'
-                                : 'bg-slate-200 text-slate-500'
+                              isSponsorForSelected
+                                ? 'bg-amber-100 text-amber-900 border border-amber-300'
+                                : 'bg-slate-200 text-slate-600 hover:bg-amber-50'
                             }`}
+                            title={`Tag as sponsor for ${currentlySelectedEvent.title}`}
                           >
-                            <Award className="w-3 h-3" />
-                            {u.sponsor_flag ? 'Sponsor' : 'Devotee'}
+                            <Star className={`w-3 h-3 ${isSponsorForSelected ? 'fill-amber-500 text-amber-500' : ''}`} />
+                            {isSponsorForSelected ? 'Event Sponsor' : '+ Tag Sponsor'}
                           </button>
-                        ) : (
-                          <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                            u.sponsor_flag ? 'bg-amber-100 text-amber-800' : 'bg-slate-200 text-slate-600'
-                          }`}>
-                            {u.sponsor_flag ? 'Sponsor' : 'Devotee'}
-                          </span>
                         )}
                       </div>
 
@@ -1978,6 +2083,47 @@ export default function App() {
           </div>
         )}
       </main>
+
+      {/* SPONSOR GRATITUDE POP-UP MODAL (Triggered for Attendees when designated as Sponsor) */}
+      {sponsorGratitudeEvent && (
+        <div className="fixed inset-0 bg-black/65 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-[#FAF6F0] border-2 border-[#C56B27] rounded-3xl p-6 w-full max-w-sm shadow-2xl relative text-center">
+            <button
+              onClick={() => setSponsorGratitudeEvent(null)}
+              className="absolute top-4 right-4 p-1.5 bg-slate-200 hover:bg-slate-300 rounded-full text-slate-700"
+            >
+              <X className="w-4 h-4" />
+            </button>
+
+            <div className="w-14 h-14 mx-auto mb-3 rounded-full bg-gradient-to-tr from-[#781D26] to-[#C56B27] flex items-center justify-center text-white shadow-lg">
+              <HeartHandshake className="w-7 h-7 text-amber-200" />
+            </div>
+
+            <span className="text-[10px] uppercase tracking-widest font-bold text-[#C56B27]">BAPS Swaminarayan Sanstha</span>
+            <h3 className="text-xl font-serif font-black text-[#781D26] mt-1">Jai Swaminarayan!</h3>
+            <p className="text-xs font-bold text-slate-800 mt-1">Thank You for Your Sponsorship</p>
+
+            <div className="my-4 p-3.5 bg-white rounded-2xl border border-[#E7DECE] text-left shadow-inner space-y-2">
+              <p className="text-xs font-bold text-slate-900">
+                {sponsorGratitudeEvent.title}
+              </p>
+              <p className="text-[11px] text-slate-500">
+                {new Date(sponsorGratitudeEvent.date_time).toLocaleDateString([], { weekday: 'long', month: 'short', day: 'numeric', year: 'numeric' })} at {sponsorGratitudeEvent.venue}
+              </p>
+              <p className="text-xs italic text-[#78281F] bg-amber-50/70 p-2 rounded-lg border border-amber-200/50 leading-relaxed">
+                "{sponsorGratitudeEvent.sponsor_message || 'Thank you for your generous sponsorship and devoted support of this Sabha.'}"
+              </p>
+            </div>
+
+            <button
+              onClick={() => setSponsorGratitudeEvent(null)}
+              className="w-full py-2.5 bg-gradient-to-r from-[#C56B27] to-[#781D26] text-white rounded-xl text-xs font-bold shadow hover:opacity-95"
+            >
+              Accept with Humility & Devotion
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* MANUAL JOIN SABHA CODE MODAL */}
       {showJoinCodeModal && (
