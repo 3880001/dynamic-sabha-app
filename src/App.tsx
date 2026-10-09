@@ -6,7 +6,7 @@ import {
   UserCheck, LogOut, Sparkles, Users, Download, PlusCircle, Award, ListChecks,
   Printer, X, Navigation, Check, Loader2, User, Plus, Trash2, ChevronDown, ChevronUp,
   MessageSquare, Image as ImageIcon, UploadCloud, Edit3, Lock, Mail, BellRing,
-  KeyRound, Share2, Copy, AlertTriangle, Star
+  KeyRound, Share2, Copy, AlertTriangle, Star, UserPlus
 } from 'lucide-react';
 
 interface Child {
@@ -37,6 +37,9 @@ export default function App() {
 
   // Sponsor Gratitude Pop-Up Modal State (For Devotees)
   const [sponsorGratitudeEvent, setSponsorGratitudeEvent] = useState<any | null>(null);
+
+  // Family Info Reminder Pop-Up State
+  const [showFamilyReminderPopup, setShowFamilyReminderPopup] = useState(false);
 
   // Profile Edit State
   const [editName, setEditName] = useState('');
@@ -195,6 +198,47 @@ export default function App() {
       }
       loadEvents();
       loadAdminData();
+    }
+  };
+
+  // Permanent Delete User (Super Admin Only)
+  const handleDeleteUser = async (targetUserId: string, userName: string) => {
+    if (profile?.role !== 'SUPER_ADMIN') {
+      alert('Only Super Admin can delete users.');
+      return;
+    }
+
+    if (targetUserId === session?.user?.id) {
+      alert('You cannot delete your own Super Admin account.');
+      return;
+    }
+
+    const confirmDelete = window.confirm(
+      `Are you sure you want to permanently delete "${userName}"? This will remove their profile, RSVP records, and attendance history.`
+    );
+    if (!confirmDelete) return;
+
+    try {
+      // First try via RPC to completely wipe auth user; fallback to profile deletion
+      const { error: rpcError } = await supabase.rpc('delete_user_by_admin', {
+        target_user_id: targetUserId,
+      });
+
+      if (rpcError) {
+        // Fallback: Delete directly from profiles table
+        const { error: deleteError } = await supabase
+          .from('profiles')
+          .delete()
+          .eq('id', targetUserId);
+
+        if (deleteError) throw deleteError;
+      }
+
+      alert(`User "${userName}" has been successfully deleted.`);
+      setAllUsers((prev) => prev.filter((u) => u.id !== targetUserId));
+      loadAdminData();
+    } catch (err: any) {
+      alert(`Failed to delete user: ${err.message}`);
     }
   };
 
@@ -357,7 +401,6 @@ export default function App() {
     loadEventSponsors();
   };
 
-  // Fetch sponsors grouped by event
   const loadEventSponsors = async () => {
     const { data } = await supabase
       .from('event_sponsors')
@@ -384,7 +427,7 @@ export default function App() {
     if (rsvps) setRsvpStats(rsvps);
   };
 
-  // Trigger gratitude pop-up if the attendee is designated as a sponsor for an upcoming event
+  // Check sponsor gratitude pop-up
   useEffect(() => {
     if (!session || events.length === 0) return;
     const now = Date.now();
@@ -402,7 +445,7 @@ export default function App() {
     }
   }, [events, eventSponsors, session, profile]);
 
-  // Check upcoming event to trigger in-app pop-up if RSVP is pending
+  // Check upcoming event RSVP pop-up
   useEffect(() => {
     if (!session || events.length === 0) return;
     const now = Date.now();
@@ -418,7 +461,23 @@ export default function App() {
     }
   }, [events, userRsvps, unlockedEventIds, session, profile, sponsorGratitudeEvent]);
 
-  // Toggle user as a sponsor for a specific event
+  // Check missing family info reminder pop-up (Triggers only if no RSVP pop-up is active)
+  useEffect(() => {
+    if (!session || !profile) return;
+    // Condition: User has not filled spouse name and has 0 children
+    const hasSpouse = profile.spouse_name && profile.spouse_name.trim().length > 0;
+    const hasChildren = Array.isArray(profile.children) && profile.children.length > 0;
+    const reminderDismissed = sessionStorage.getItem(`family_reminder_seen_${session.user.id}`);
+
+    if (!hasSpouse && !hasChildren && !reminderDismissed && !showPendingRsvpPopup && !sponsorGratitudeEvent) {
+      const timer = setTimeout(() => {
+        setShowFamilyReminderPopup(true);
+        sessionStorage.setItem(`family_reminder_seen_${session.user.id}`, 'true');
+      }, 1200); // 1.2s delay for gentle entrance
+      return () => clearTimeout(timer);
+    }
+  }, [session, profile, showPendingRsvpPopup, sponsorGratitudeEvent]);
+
   const handleToggleEventSponsor = async (eventId: string, userId: string, currentlyAssigned: boolean) => {
     if (profile?.role !== 'SUPER_ADMIN' && profile?.role !== 'ORGANIZER') {
       alert('Only Organizers and Super Admins can assign event sponsors.');
@@ -609,6 +668,7 @@ export default function App() {
         children: children,
       }));
       setProfileSaveSuccess(true);
+      setShowFamilyReminderPopup(false);
       setTimeout(() => setProfileSaveSuccess(false), 3000);
       loadAdminData();
     }
@@ -1923,7 +1983,7 @@ export default function App() {
               </div>
               <p className="text-[11px] text-slate-500 mb-3">
                 {isSuperAdmin
-                  ? 'Manage roles, view family records, and assign devotees as sponsors for the selected event.'
+                  ? 'Manage roles, delete accounts, view family records, and assign devotees as sponsors for the selected event.'
                   : 'Read-only directory of devotees with basic contact, family count, and sponsor tagging.'}
               </p>
 
@@ -1948,22 +2008,36 @@ export default function App() {
                           {u.phone && <p className="text-[10px] text-slate-600">📞 {u.phone}</p>}
                         </div>
 
-                        {/* Event Sponsor Tagging Button */}
-                        {currentlySelectedEvent && (
-                          <button
-                            type="button"
-                            onClick={() => handleToggleEventSponsor(currentlySelectedEvent.event_id, u.id, isSponsorForSelected)}
-                            className={`px-2 py-1 rounded text-[10px] font-bold flex items-center gap-1 transition ${
-                              isSponsorForSelected
-                                ? 'bg-amber-100 text-amber-900 border border-amber-300'
-                                : 'bg-slate-200 text-slate-600 hover:bg-amber-50'
-                            }`}
-                            title={`Tag as sponsor for ${currentlySelectedEvent.title}`}
-                          >
-                            <Star className={`w-3 h-3 ${isSponsorForSelected ? 'fill-amber-500 text-amber-500' : ''}`} />
-                            {isSponsorForSelected ? 'Event Sponsor' : '+ Tag Sponsor'}
-                          </button>
-                        )}
+                        <div className="flex items-center gap-1.5">
+                          {/* Event Sponsor Tagging Button */}
+                          {currentlySelectedEvent && (
+                            <button
+                              type="button"
+                              onClick={() => handleToggleEventSponsor(currentlySelectedEvent.event_id, u.id, isSponsorForSelected)}
+                              className={`px-2 py-1 rounded text-[10px] font-bold flex items-center gap-1 transition ${
+                                isSponsorForSelected
+                                  ? 'bg-amber-100 text-amber-900 border border-amber-300'
+                                  : 'bg-slate-200 text-slate-600 hover:bg-amber-50'
+                              }`}
+                              title={`Tag as sponsor for ${currentlySelectedEvent.title}`}
+                            >
+                              <Star className={`w-3 h-3 ${isSponsorForSelected ? 'fill-amber-500 text-amber-500' : ''}`} />
+                              {isSponsorForSelected ? 'Event Sponsor' : '+ Tag Sponsor'}
+                            </button>
+                          )}
+
+                          {/* Super Admin Delete User Button */}
+                          {isSuperAdmin && u.id !== session?.user?.id && (
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteUser(u.id, u.name || u.email)}
+                              className="p-1 bg-red-50 hover:bg-red-100 text-red-600 rounded-lg text-xs border border-red-200 transition"
+                              title="Delete user from database"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                        </div>
                       </div>
 
                       {isOrganizer && (
@@ -2084,7 +2158,51 @@ export default function App() {
         )}
       </main>
 
-      {/* SPONSOR GRATITUDE POP-UP MODAL (Triggered for Attendees when designated as Sponsor) */}
+      {/* FAMILY PROFILE MISSING INFORMATION POP-UP MODAL */}
+      {showFamilyReminderPopup && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-[#FAF6F0] border-2 border-[#C56B27] rounded-3xl p-6 w-full max-w-sm shadow-2xl relative text-center">
+            <button
+              onClick={() => setShowFamilyReminderPopup(false)}
+              className="absolute top-4 right-4 p-1.5 bg-slate-200 hover:bg-slate-300 rounded-full text-slate-700"
+            >
+              <X className="w-4 h-4" />
+            </button>
+
+            <div className="w-12 h-12 mx-auto mb-2 rounded-full bg-gradient-to-tr from-[#781D26] to-[#C56B27] flex items-center justify-center text-white shadow">
+              <UserPlus className="w-6 h-6 text-amber-200" />
+            </div>
+
+            <p className="text-[10px] font-bold uppercase tracking-wider text-[#C56B27]">Profile Incomplete</p>
+            <h3 className="text-lg font-serif font-black text-[#781D26] mt-0.5">Update Family Records</h3>
+            <p className="text-xs text-slate-600 mt-1 mb-4 leading-relaxed">
+              Jai Swaminarayan! Please take a moment to add your spouse and children details to help organizers with Sabha seating, youth activities, and Mahaprasad planning.
+            </p>
+
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowFamilyReminderPopup(false);
+                  setActiveTab('profile');
+                }}
+                className="flex-1 py-2.5 bg-gradient-to-r from-[#C56B27] to-[#781D26] text-white rounded-xl text-xs font-bold shadow hover:opacity-95"
+              >
+                Update My Profile Now
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowFamilyReminderPopup(false)}
+                className="px-4 py-2.5 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-xl text-xs font-bold"
+              >
+                Later
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* SPONSOR GRATITUDE POP-UP MODAL */}
       {sponsorGratitudeEvent && (
         <div className="fixed inset-0 bg-black/65 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-[#FAF6F0] border-2 border-[#C56B27] rounded-3xl p-6 w-full max-w-sm shadow-2xl relative text-center">
