@@ -138,8 +138,9 @@ export default function App() {
     }
   };
 
+  // Join Event by Code (Unlocks and updates access list)
   const handleJoinByCode = async (codeToUnlock: string, showToast = true) => {
-    if (!codeToUnlock.trim()) return;
+    if (!codeToUnlock || !codeToUnlock.trim()) return;
     setIsJoiningEvent(true);
     try {
       const { data, error } = await supabase.rpc('unlock_event_by_code', {
@@ -152,15 +153,20 @@ export default function App() {
         if (showToast) alert(`Event unlocked: "${data.title}"!`);
         setShowJoinCodeModal(false);
         setInputJoinCode('');
-        if (session) {
-          fetchUnlockedEvents(session.user.id);
-          loadEvents();
+        // Remove pending code once successfully processed
+        localStorage.removeItem('pending_join_code');
+
+        const { data: { session: currentSession } } = await supabase.auth.getSession();
+        if (currentSession) {
+          await fetchUnlockedEvents(currentSession.user.id);
+          await loadEvents();
+          setActiveTab('events');
         }
       } else {
         if (showToast) alert(data?.error || 'Invalid Sabha Code.');
       }
     } catch (err: any) {
-      if (showToast) alert(`Error: ${err.message}`);
+      if (showToast) alert(`Error unlocking event: ${err.message}`);
     } finally {
       setIsJoiningEvent(false);
     }
@@ -239,6 +245,12 @@ export default function App() {
       const checkinToken = params.get('checkin');
       const joinParam = params.get('join');
 
+      // 1. If someone clicks a WhatsApp link, store the join code persistently
+      if (joinParam) {
+        localStorage.setItem('pending_join_code', joinParam.trim().toUpperCase());
+      }
+
+      // 2. Handle Supabase email confirmation
       if (token_hash && type) {
         const { error } = await supabase.auth.verifyOtp({ token_hash, type });
         if (!error) {
@@ -247,6 +259,7 @@ export default function App() {
         }
       }
 
+      // 3. Handle printed QR checkin
       if (checkinToken) {
         window.history.replaceState({}, document.title, window.location.pathname);
         if (currentSession) {
@@ -254,9 +267,11 @@ export default function App() {
         }
       }
 
-      if (joinParam && currentSession) {
+      // 4. If session is ready, process pending join code immediately
+      const codeToUnlock = joinParam || localStorage.getItem('pending_join_code');
+      if (codeToUnlock && currentSession) {
         window.history.replaceState({}, document.title, window.location.pathname);
-        handleJoinByCode(joinParam, false);
+        await handleJoinByCode(codeToUnlock, false);
       }
     };
 
@@ -272,13 +287,19 @@ export default function App() {
       }
     });
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, newSession) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, newSession) => {
       setSession(newSession);
       if (newSession) {
         fetchProfile(newSession.user.id);
-        fetchUnlockedEvents(newSession.user.id);
+        await fetchUnlockedEvents(newSession.user.id);
         fetchUserRsvps(newSession.user.id);
         handleUrlParams(newSession);
+
+        // Check if there's a stored join code after login or signup
+        const storedJoinCode = localStorage.getItem('pending_join_code');
+        if (storedJoinCode) {
+          await handleJoinByCode(storedJoinCode, false);
+        }
       } else {
         setProfile(null);
         setUnlockedEventIds(new Set());
@@ -362,23 +383,48 @@ export default function App() {
 
   const handleAuth = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    // Preserve join code in case email confirmation redirects the user
+    const pendingCode = localStorage.getItem('pending_join_code');
+    const redirectUrl = pendingCode
+      ? `https://3880001.github.io/dynamic-sabha-app/?join=${encodeURIComponent(pendingCode)}`
+      : 'https://3880001.github.io/dynamic-sabha-app/';
+
     if (isRegistering) {
-      const { error } = await supabase.auth.signUp({
+      const { data, error } = await supabase.auth.signUp({
         email: authEmail,
         password: authPassword,
         options: {
           data: { name: authName, role: 'ATTENDEE' },
-          emailRedirectTo: 'https://3880001.github.io/dynamic-sabha-app/',
+          emailRedirectTo: redirectUrl,
         },
       });
-      if (error) alert(error.message);
-      else alert('Jai Swaminarayan! Verification link sent to your email.');
+      if (error) {
+        alert(error.message);
+      } else {
+        if (data.session) {
+          // If Supabase has email confirmation disabled, user signs in immediately
+          alert('Registration successful! Welcome to the Sabha Portal.');
+          if (pendingCode) {
+            await handleJoinByCode(pendingCode, false);
+          }
+        } else {
+          alert('Jai Swaminarayan! Verification link sent to your email. Click the link to complete registration and view your Sabha.');
+        }
+      }
     } else {
-      const { error } = await supabase.auth.signInWithPassword({
+      const { data, error } = await supabase.auth.signInWithPassword({
         email: authEmail,
         password: authPassword,
       });
-      if (error) alert(error.message);
+      if (error) {
+        alert(error.message);
+      } else if (data.session) {
+        // Automatically unlock event if a join code was stored prior to sign-in
+        if (pendingCode) {
+          await handleJoinByCode(pendingCode, false);
+        }
+      }
     }
   };
 
@@ -726,6 +772,9 @@ export default function App() {
     };
   }, [activeTab]);
 
+  // Read stored join code to show a welcoming banner if user opened an invite link
+  const storedPendingCode = typeof window !== 'undefined' ? localStorage.getItem('pending_join_code') : null;
+
   if (!session) {
     return (
       <div className="min-h-screen bg-[#FAF6F0] flex flex-col justify-center items-center px-4 py-8">
@@ -736,6 +785,14 @@ export default function App() {
           <span className="text-xs uppercase tracking-widest font-bold text-[#C56B27]">BAPS Swaminarayan Sanstha</span>
           <h1 className="text-2xl font-serif font-bold text-[#781D26] mt-1">Dynamic Sabha Portal</h1>
           <p className="text-xs text-slate-500 mt-1 mb-4">Attendance & Event Check-In</p>
+
+          {/* Pending Event Banner */}
+          {storedPendingCode && (
+            <div className="mb-4 p-2.5 bg-amber-50 border border-amber-200 text-amber-800 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5">
+              <KeyRound className="w-3.5 h-3.5 text-[#C56B27]" />
+              <span>Sabha Invite: <strong>{storedPendingCode}</strong> attached</span>
+            </div>
+          )}
 
           {verificationMessage && (
             <div className="mb-4 p-3 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-xl text-xs font-semibold">
@@ -783,7 +840,7 @@ export default function App() {
               type="submit"
               className="w-full py-2.5 bg-gradient-to-r from-[#C56B27] to-[#781D26] text-white rounded-xl text-sm font-bold shadow"
             >
-              {isRegistering ? 'Register for Sabha' : 'Sign In'}
+              {isRegistering ? 'Register & Open Sabha' : 'Sign In & Open Sabha'}
             </button>
           </form>
 
@@ -798,6 +855,7 @@ export default function App() {
     );
   }
 
+  // Filter events: Admins see all future events. Devotees see future events they unlocked.
   const visibleEvents = events.filter((ev) => {
     const isFuture = new Date(ev.date_time).getTime() > Date.now();
     if (!isFuture) return false;
@@ -936,7 +994,7 @@ export default function App() {
                         <div className="flex items-center gap-1 shrink-0">
                           <button
                             onClick={() => openQRPoster(ev)}
-                            className="flex items-center gap-1 bg-amber-50 hover:bg-amber-100 border border-amber-300 text-[#C56B27] px-2 py-1 rounded-lg text-xs font-bold transition"
+                            className="flex items-center gap-1 bg-amber-50 hover:bg-amber-100 border border-amber-300 text-[#C56B27] px-2.5 py-1 rounded-lg text-xs font-bold transition"
                             title="Entrance QR Poster"
                           >
                             <QrCode className="w-3.5 h-3.5" /> QR
