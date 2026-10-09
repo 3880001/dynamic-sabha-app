@@ -15,14 +15,12 @@ interface Child {
   phone?: string;
 }
 
-// Custom Portal Logo Component using the provided devotee floral hands artwork
 const AppLogo = ({ className = "w-10 h-10" }: { className?: string }) => (
   <img
     src="./logo.png"
     alt="My Sabha Portal Logo"
     className={`${className} object-contain drop-shadow-sm`}
     onError={(e) => {
-      // Graceful fallback to inline image if local file is missing
       (e.target as HTMLImageElement).src = "https://3880001.github.io/dynamic-sabha-app/logo.png";
     }}
   />
@@ -43,18 +41,13 @@ export default function App() {
   const [scanStatus, setScanStatus] = useState<any>(null);
   const [verificationMessage, setVerificationMessage] = useState<string | null>(null);
 
-  // Manual Join Code Modal State
   const [showJoinCodeModal, setShowJoinCodeModal] = useState(false);
   const [inputJoinCode, setInputJoinCode] = useState('');
   const [isJoiningEvent, setIsJoiningEvent] = useState(false);
 
-  // Sponsor Gratitude Pop-Up Modal State (For Devotees)
   const [sponsorGratitudeEvent, setSponsorGratitudeEvent] = useState<any | null>(null);
-
-  // Family Info Reminder Pop-Up State
   const [showFamilyReminderPopup, setShowFamilyReminderPopup] = useState(false);
 
-  // Profile Edit State
   const [editName, setEditName] = useState('');
   const [editPhone, setEditPhone] = useState('');
   const [spouseName, setSpouseName] = useState('');
@@ -63,41 +56,34 @@ export default function App() {
   const [children, setChildren] = useState<Child[]>([]);
   const [profileSaveSuccess, setProfileSaveSuccess] = useState(false);
 
-  // Admin & Management State
   const [allUsers, setAllUsers] = useState<any[]>([]);
   const [attendanceStats, setAttendanceStats] = useState<any[]>([]);
   const [rsvpStats, setRsvpStats] = useState<any[]>([]);
   const [showEventModal, setShowEventModal] = useState(false);
   const [expandedUser, setExpandedUser] = useState<string | null>(null);
 
-  // Per-Event Inspection & Manual Reminders
   const [selectedAdminEventId, setSelectedAdminEventId] = useState<string>('');
   const [activeRosterSubTab, setActiveRosterSubTab] = useState<'completed' | 'pending_rsvp' | 'pending_checkin'>('completed');
   const [isSendingReminder, setIsSendingReminder] = useState(false);
 
-  // In-App Pop-up State for Pending RSVP
   const [showPendingRsvpPopup, setShowPendingRsvpPopup] = useState(false);
   const [popupEvent, setPopupEvent] = useState<any | null>(null);
 
-  // RSVP Modal State
   const [rsvpModalEvent, setRsvpModalEvent] = useState<any | null>(null);
   const [rsvpAdultCount, setRsvpAdultCount] = useState<number>(1);
   const [rsvpChildCount, setRsvpChildCount] = useState<number>(0);
   const [rsvpRemarks, setRsvpRemarks] = useState<string>('');
   const [editingRsvpEventId, setEditingRsvpEventId] = useState<string | null>(null);
 
-  // Flyer Viewer Modal State
   const [selectedFlyerUrl, setSelectedFlyerUrl] = useState<string | null>(null);
   const [flyerFile, setFlyerFile] = useState<File | null>(null);
   const [isUploadingFlyer, setIsUploadingFlyer] = useState(false);
 
-  // Live Address Autocomplete State
   const [addressSuggestions, setAddressSuggestions] = useState<any[]>([]);
   const [isSearchingAddress, setIsSearchingAddress] = useState(false);
   const [showAddressDropdown, setShowAddressDropdown] = useState(false);
   const addressWrapperRef = useRef<HTMLDivElement>(null);
 
-  // Active QR Poster Modal State
   const [selectedEventForQR, setSelectedEventForQR] = useState<any | null>(null);
   const [qrDataUrl, setQrDataUrl] = useState<string>('');
 
@@ -124,7 +110,7 @@ export default function App() {
         return url.searchParams.get('checkin') || scannedText;
       }
     } catch {
-      // fallback
+      // no-op
     }
     return scannedText.trim();
   };
@@ -190,7 +176,6 @@ export default function App() {
     }
   };
 
-  // Permanent Delete Event (Super Admin Only)
   const handleDeleteEventPermanent = async (eventId: string, title: string) => {
     if (profile?.role !== 'SUPER_ADMIN') {
       alert('Only Super Admin can permanently delete events.');
@@ -214,7 +199,6 @@ export default function App() {
     }
   };
 
-  // Permanent Delete User (Super Admin Only)
   const handleDeleteUser = async (targetUserId: string, userName: string) => {
     if (profile?.role !== 'SUPER_ADMIN') {
       alert('Only Super Admin can delete users.');
@@ -253,7 +237,6 @@ export default function App() {
     }
   };
 
-  // Request Deletion (Organizer Workflow)
   const handleRequestDeletion = async (eventId: string, title: string) => {
     const reason = window.prompt(`Please provide a reason to request deletion for "${title}":`);
     if (!reason || !reason.trim()) return;
@@ -275,7 +258,6 @@ export default function App() {
     }
   };
 
-  // Reject / Cancel Deletion Request (Super Admin)
   const handleRejectDeletionRequest = async (eventId: string, title: string) => {
     const { error } = await supabase
       .from('events')
@@ -438,7 +420,6 @@ export default function App() {
     if (rsvps) setRsvpStats(rsvps);
   };
 
-  // Check sponsor gratitude pop-up
   useEffect(() => {
     if (!session || events.length === 0) return;
     const now = Date.now();
@@ -456,7 +437,6 @@ export default function App() {
     }
   }, [events, eventSponsors, session, profile]);
 
-  // Check upcoming event RSVP pop-up
   useEffect(() => {
     if (!session || events.length === 0) return;
     const now = Date.now();
@@ -472,7 +452,6 @@ export default function App() {
     }
   }, [events, userRsvps, unlockedEventIds, session, profile, sponsorGratitudeEvent]);
 
-  // Check missing family info reminder pop-up
   useEffect(() => {
     if (!session || !profile) return;
     const hasSpouse = profile.spouse_name && profile.spouse_name.trim().length > 0;
@@ -1501,7 +1480,6 @@ export default function App() {
         {/* TAB 4: ADMIN & ORGANIZER CONSOLE */}
         {activeTab === 'admin' && (isSuperAdmin || isOrganizer) && (
           <div className="space-y-6">
-            {/* Top Overview Badges */}
             <div className="grid grid-cols-3 gap-2">
               <div className="bg-white border border-[#E7DECE] rounded-2xl p-3 text-center">
                 <Users className="w-4 h-4 text-slate-500 mx-auto mb-1" />
@@ -1521,7 +1499,6 @@ export default function App() {
               </div>
             </div>
 
-            {/* SUPER ADMIN REVIEW QUEUE: PENDING EVENT DELETION REQUESTS */}
             {isSuperAdmin && deletionRequestedEvents.length > 0 && (
               <div className="bg-red-50 border-2 border-red-200 rounded-2xl p-4 space-y-3">
                 <div className="flex items-center gap-2 text-red-800">
@@ -1575,7 +1552,6 @@ export default function App() {
               </div>
             )}
 
-            {/* Event Management & Creator */}
             <div className="bg-white border border-[#E7DECE] rounded-2xl p-4 space-y-3">
               <div className="flex justify-between items-center">
                 <h3 className="font-serif font-bold text-slate-900 text-sm">Organizer Controls</h3>
@@ -1747,7 +1723,6 @@ export default function App() {
               )}
             </div>
 
-            {/* Per-Event Breakdown & Reminder Center */}
             <div className="bg-white border border-[#E7DECE] rounded-2xl p-4 space-y-4">
               <div className="flex justify-between items-center">
                 <div>
@@ -1756,7 +1731,6 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Event Select Dropdown + Direct Permanent Delete Button */}
               <div>
                 <div className="flex justify-between items-center">
                   <label className="text-[10px] font-bold text-slate-600 uppercase">Select Assembly (Active & Past)</label>
@@ -1798,7 +1772,6 @@ export default function App() {
                 </select>
               </div>
 
-              {/* Current Event Sponsors Tagging Row */}
               {currentlySelectedEvent && (
                 <div className="p-3 bg-[#FAF6F0] border border-[#E7DECE] rounded-xl space-y-2">
                   <div className="flex justify-between items-center">
@@ -1829,7 +1802,6 @@ export default function App() {
                 </div>
               )}
 
-              {/* Action Buttons to Email Pending Attendees */}
               <div className="flex flex-wrap gap-2 pt-1">
                 <button
                   type="button"
@@ -1851,7 +1823,6 @@ export default function App() {
                 </button>
               </div>
 
-              {/* Event Specific Numbers */}
               {(() => {
                 const eventRsvps = rsvpStats.filter((r) => r.event_id === selectedAdminEventId);
                 const eventCheckins = attendanceStats.filter((a) => a.event_id === selectedAdminEventId);
@@ -1889,7 +1860,6 @@ export default function App() {
                       </div>
                     </div>
 
-                    {/* Sub-Tabs: Responded vs Pending RSVP vs Awaiting Door Check-in */}
                     <div className="pt-2">
                       <div className="flex border-b border-[#E7DECE] mb-2 text-xs font-bold">
                         <button
@@ -1983,7 +1953,6 @@ export default function App() {
               })()}
             </div>
 
-            {/* Devotee Directory & Sponsor Management */}
             <div className="bg-white border border-[#E7DECE] rounded-2xl p-4">
               <div className="flex justify-between items-center mb-1">
                 <h3 className="font-serif font-bold text-slate-900 text-sm">Devotee Directory & Sponsor Management</h3>
@@ -2019,7 +1988,6 @@ export default function App() {
                         </div>
 
                         <div className="flex items-center gap-1.5">
-                          {/* Event Sponsor Tagging Button */}
                           {currentlySelectedEvent && (
                             <button
                               type="button"
@@ -2036,7 +2004,6 @@ export default function App() {
                             </button>
                           )}
 
-                          {/* Super Admin Delete User Button */}
                           {isSuperAdmin && u.id !== session?.user?.id && (
                             <button
                               type="button"
@@ -2114,7 +2081,6 @@ export default function App() {
               </div>
             </div>
 
-            {/* All Assembly QR Codes List (With Super Admin Delete Controls) */}
             <div className="bg-white border border-[#E7DECE] rounded-2xl p-4">
               <h3 className="font-serif font-bold text-slate-900 text-sm mb-1">All Assembly QR Codes</h3>
               <p className="text-[11px] text-slate-500 mb-3">Launch entrance posters or delete past/expired assemblies.</p>
