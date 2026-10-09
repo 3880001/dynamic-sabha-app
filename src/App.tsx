@@ -6,7 +6,7 @@ import {
   UserCheck, LogOut, Sparkles, Users, Download, PlusCircle, Award, ListChecks,
   Printer, X, Navigation, Check, Loader2, User, Plus, Trash2, ChevronDown, ChevronUp,
   MessageSquare, Image as ImageIcon, UploadCloud, Edit3, Lock, Mail, BellRing,
-  KeyRound, Share2, Copy
+  KeyRound, Share2, Copy, AlertTriangle
 } from 'lucide-react';
 
 interface Child {
@@ -138,7 +138,6 @@ export default function App() {
     }
   };
 
-  // Join Event by Code (Called manually or via ?join= parameter)
   const handleJoinByCode = async (codeToUnlock: string, showToast = true) => {
     if (!codeToUnlock.trim()) return;
     setIsJoiningEvent(true);
@@ -164,6 +163,68 @@ export default function App() {
       if (showToast) alert(`Error: ${err.message}`);
     } finally {
       setIsJoiningEvent(false);
+    }
+  };
+
+  // Permanent Delete Event (Super Admin Only)
+  const handleDeleteEventPermanent = async (eventId: string, title: string) => {
+    if (profile?.role !== 'SUPER_ADMIN') {
+      alert('Only Super Admin can permanently delete events.');
+      return;
+    }
+    const confirmDelete = window.confirm(
+      `Are you sure you want to permanently delete "${title}"? This cannot be undone.`
+    );
+    if (!confirmDelete) return;
+
+    const { error } = await supabase.from('events').delete().eq('event_id', eventId);
+    if (error) {
+      alert(`Delete failed: ${error.message}`);
+    } else {
+      alert(`Event "${title}" has been permanently deleted.`);
+      loadEvents();
+      loadAdminData();
+    }
+  };
+
+  // Request Deletion (Organizer Workflow)
+  const handleRequestDeletion = async (eventId: string, title: string) => {
+    const reason = window.prompt(`Please provide a reason to request deletion for "${title}":`);
+    if (!reason || !reason.trim()) return;
+
+    const { error } = await supabase
+      .from('events')
+      .update({
+        deletion_requested: true,
+        deletion_reason: reason.trim(),
+        deletion_requested_by: session.user.id,
+      })
+      .eq('event_id', eventId);
+
+    if (error) {
+      alert(`Error submitting request: ${error.message}`);
+    } else {
+      alert(`Deletion request submitted to Super Admin for "${title}".`);
+      loadEvents();
+    }
+  };
+
+  // Reject / Cancel Deletion Request (Super Admin)
+  const handleRejectDeletionRequest = async (eventId: string, title: string) => {
+    const { error } = await supabase
+      .from('events')
+      .update({
+        deletion_requested: false,
+        deletion_reason: null,
+        deletion_requested_by: null,
+      })
+      .eq('event_id', eventId);
+
+    if (error) {
+      alert(`Error resetting request: ${error.message}`);
+    } else {
+      alert(`Deletion request for "${title}" has been dismissed.`);
+      loadEvents();
     }
   };
 
@@ -261,7 +322,7 @@ export default function App() {
   };
 
   const loadEvents = async () => {
-    const { data } = await supabase.from('events').select('*').order('date_time', { ascending: true });
+    const { data } = await supabase.from('events').select('*, profiles:deletion_requested_by(name, email)').order('date_time', { ascending: true });
     if (data) {
       setEvents(data);
       if (data.length > 0 && !selectedAdminEventId) {
@@ -281,7 +342,6 @@ export default function App() {
     if (rsvps) setRsvpStats(rsvps);
   };
 
-  // Check upcoming event to trigger in-app pop-up if RSVP is pending
   useEffect(() => {
     if (!session || events.length === 0) return;
     const now = Date.now();
@@ -452,7 +512,6 @@ export default function App() {
     setChildren(updated);
   };
 
-  // Debounced Live Address Search
   useEffect(() => {
     if (!newEvent.address || newEvent.address.trim().length < 3) {
       setAddressSuggestions([]);
@@ -498,7 +557,6 @@ export default function App() {
     setShowAddressDropdown(false);
   };
 
-  // Copy WhatsApp Invite Link to Clipboard
   const copyWhatsAppInvite = (joinCode: string, title: string) => {
     const inviteUrl = `https://3880001.github.io/dynamic-sabha-app/?join=${encodeURIComponent(joinCode)}`;
     const textToShare = `Jai Swaminarayan! Please RSVP for "${title}". Tap this link to view details and submit: ${inviteUrl}`;
@@ -509,7 +567,6 @@ export default function App() {
     );
   };
 
-  // Event Creation with Flyer Upload and Join Code
   const handleCreateEvent = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsUploadingFlyer(true);
@@ -738,8 +795,6 @@ export default function App() {
     );
   }
 
-  // Filter events visible to the current attendee:
-  // Admins & Organizers see all upcoming events. Devotees see upcoming events they have unlocked.
   const visibleEvents = events.filter((ev) => {
     const isFuture = new Date(ev.date_time).getTime() > Date.now();
     if (!isFuture) return false;
@@ -752,6 +807,9 @@ export default function App() {
     (sum, r) => sum + (Number(r.adult_count) || 1) + (Number(r.child_count) || 0),
     0
   );
+
+  // Events that have pending deletion requests for Super Admin review
+  const deletionRequestedEvents = events.filter((ev) => ev.deletion_requested === true);
 
   return (
     <div className="max-w-md mx-auto min-h-screen bg-[#FAF6F0] pb-24">
@@ -817,10 +875,12 @@ export default function App() {
                 const isCompleted = !!userRsvp;
                 const isEditing = editingRsvpEventId === ev.event_id;
                 const lockedToday = isCompleted && isRsvpSubmittedToday(userRsvp.created_at);
-                const isStaff = profile?.role === 'SUPER_ADMIN' || profile?.role === 'ORGANIZER';
+                const isSuperAdmin = profile?.role === 'SUPER_ADMIN';
+                const isOrganizer = profile?.role === 'ORGANIZER';
+                const isStaff = isSuperAdmin || isOrganizer;
 
                 return (
-                  <div key={ev.event_id} className="bg-white border border-[#E7DECE] rounded-2xl p-4 shadow-sm overflow-hidden">
+                  <div key={ev.event_id} className="bg-white border border-[#E7DECE] rounded-2xl p-4 shadow-sm overflow-hidden relative">
                     {/* Event Flyer */}
                     {ev.flyer_url && (
                       <div
@@ -840,10 +900,18 @@ export default function App() {
 
                     <div className="flex justify-between items-start gap-2">
                       <div className="flex-1">
-                        <h3 className="font-serif font-bold text-lg text-slate-900 leading-snug">{ev.title}</h3>
+                        <div className="flex items-center gap-2">
+                          <h3 className="font-serif font-bold text-lg text-slate-900 leading-snug">{ev.title}</h3>
+                          {ev.deletion_requested && (
+                            <span className="text-[9px] bg-red-100 text-red-700 px-2 py-0.5 rounded font-bold border border-red-200">
+                              Deletion Requested
+                            </span>
+                          )}
+                        </div>
+
                         {/* Sabha Code is visible only to Super Admins & Organizers */}
                         {isStaff && ev.join_code && (
-                          <div className="flex items-center gap-2 mt-1.5">
+                          <div className="flex flex-wrap items-center gap-2 mt-1.5">
                             <span className="text-[11px] font-mono font-bold text-[#781D26] bg-amber-50 px-2 py-0.5 rounded border border-amber-300 inline-flex items-center gap-1">
                               <KeyRound className="w-3 h-3 text-[#C56B27]" />
                               Code: {ev.join_code}
@@ -860,14 +928,41 @@ export default function App() {
                         )}
                       </div>
 
-                      {/* Staff Entrance QR Launch */}
+                      {/* Top Action Buttons (Staff Only) */}
                       {isStaff && (
-                        <button
-                          onClick={() => openQRPoster(ev)}
-                          className="flex items-center gap-1 bg-amber-50 hover:bg-amber-100 border border-amber-300 text-[#C56B27] px-2.5 py-1 rounded-lg text-xs font-bold transition shrink-0"
-                        >
-                          <QrCode className="w-3.5 h-3.5" /> Entrance QR
-                        </button>
+                        <div className="flex items-center gap-1 shrink-0">
+                          <button
+                            onClick={() => openQRPoster(ev)}
+                            className="flex items-center gap-1 bg-amber-50 hover:bg-amber-100 border border-amber-300 text-[#C56B27] px-2 py-1 rounded-lg text-xs font-bold transition"
+                            title="Entrance QR Poster"
+                          >
+                            <QrCode className="w-3.5 h-3.5" /> QR
+                          </button>
+
+                          {/* Super Admin Direct Delete */}
+                          {isSuperAdmin && (
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteEventPermanent(ev.event_id, ev.title)}
+                              className="p-1 bg-red-50 hover:bg-red-100 text-red-600 rounded-lg text-xs border border-red-200 transition"
+                              title="Permanently Delete Event"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          )}
+
+                          {/* Organizer Request Deletion */}
+                          {isOrganizer && !ev.deletion_requested && (
+                            <button
+                              type="button"
+                              onClick={() => handleRequestDeletion(ev.event_id, ev.title)}
+                              className="p-1 bg-slate-100 hover:bg-red-50 text-slate-500 hover:text-red-600 rounded-lg text-xs border border-slate-200 transition"
+                              title="Request Event Deletion from Super Admin"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          )}
+                        </div>
                       )}
                     </div>
 
@@ -1220,6 +1315,60 @@ export default function App() {
                 <p className="text-xl font-black text-emerald-700">{attendanceStats.length}</p>
               </div>
             </div>
+
+            {/* SUPER ADMIN REVIEW QUEUE: PENDING EVENT DELETION REQUESTS */}
+            {profile?.role === 'SUPER_ADMIN' && deletionRequestedEvents.length > 0 && (
+              <div className="bg-red-50 border-2 border-red-200 rounded-2xl p-4 space-y-3">
+                <div className="flex items-center gap-2 text-red-800">
+                  <AlertTriangle className="w-5 h-5 text-red-600 shrink-0" />
+                  <h3 className="font-serif font-bold text-sm">Event Deletion Requests ({deletionRequestedEvents.length})</h3>
+                </div>
+                <p className="text-[11px] text-red-700">
+                  Organizers have requested the following events to be deleted. Review and choose to approve permanent deletion or reject.
+                </p>
+
+                <div className="space-y-2">
+                  {deletionRequestedEvents.map((reqEv) => (
+                    <div key={reqEv.event_id} className="p-3 bg-white border border-red-200 rounded-xl space-y-2">
+                      <div className="flex justify-between items-start">
+                        <div>
+                          <p className="font-bold text-slate-900 text-xs">{reqEv.title}</p>
+                          <p className="text-[10px] text-slate-500">
+                            {new Date(reqEv.date_time).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })} at {reqEv.venue}
+                          </p>
+                        </div>
+                        <span className="text-[9px] bg-red-100 text-red-700 px-2 py-0.5 rounded font-bold">
+                          Pending Review
+                        </span>
+                      </div>
+
+                      {reqEv.deletion_reason && (
+                        <p className="text-[11px] text-slate-700 bg-red-50/60 p-2 rounded border border-red-100 italic">
+                          Reason: "{reqEv.deletion_reason}"
+                        </p>
+                      )}
+
+                      <div className="flex gap-2 pt-1">
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteEventPermanent(reqEv.event_id, reqEv.title)}
+                          className="flex-1 py-1.5 bg-red-600 hover:bg-red-700 text-white rounded-lg text-xs font-bold transition flex items-center justify-center gap-1"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" /> Approve & Delete Permanently
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleRejectDeletionRequest(reqEv.event_id, reqEv.title)}
+                          className="px-3 py-1.5 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-lg text-xs font-bold transition"
+                        >
+                          Reject / Keep Event
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {/* Event Management & Creator */}
             <div className="bg-white border border-[#E7DECE] rounded-2xl p-4 space-y-3">
