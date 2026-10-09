@@ -110,7 +110,7 @@ export default function App() {
         return url.searchParams.get('checkin') || scannedText;
       }
     } catch {
-      // no-op
+      // ignore
     }
     return scannedText.trim();
   };
@@ -983,7 +983,6 @@ export default function App() {
 
   return (
     <div className="max-w-md mx-auto min-h-screen bg-[#FAF6F0] pb-24">
-      {/* Header */}
       <header className="bg-white border-b border-[#E7DECE] px-4 py-3 flex justify-between items-center sticky top-0 z-10">
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 flex items-center justify-center">
@@ -1012,7 +1011,6 @@ export default function App() {
       </header>
 
       <main className="p-4">
-        {/* TAB 1: SABHA KARYAKRAM FEED */}
         {activeTab === 'events' && (
           <div className="space-y-4">
             <div className="flex justify-between items-center mb-1">
@@ -1050,7 +1048,6 @@ export default function App() {
 
                 return (
                   <div key={ev.event_id} className="bg-white border border-[#E7DECE] rounded-2xl p-4 shadow-sm overflow-hidden relative">
-                    {/* Event Flyer */}
                     {ev.flyer_url && (
                       <div
                         className="mb-3 rounded-xl overflow-hidden border border-[#E7DECE] relative group cursor-pointer"
@@ -1078,7 +1075,6 @@ export default function App() {
                           )}
                         </div>
 
-                        {/* Event Sponsors Display on Card */}
                         {currentEventSponsors.length > 0 && (
                           <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
                             <span className="text-[10px] font-bold text-amber-900 uppercase tracking-wider flex items-center gap-1">
@@ -1095,7 +1091,6 @@ export default function App() {
                           </div>
                         )}
 
-                        {/* Sabha Code is visible only to Super Admins & Organizers */}
                         {isStaff && ev.join_code && (
                           <div className="flex flex-wrap items-center gap-2 mt-1.5">
                             <span className="text-[11px] font-mono font-bold text-[#781D26] bg-amber-50 px-2 py-0.5 rounded border border-amber-300 inline-flex items-center gap-1">
@@ -1114,7 +1109,6 @@ export default function App() {
                         )}
                       </div>
 
-                      {/* Top Action Buttons (Staff Only) */}
                       {isStaff && (
                         <div className="flex items-center gap-1 shrink-0">
                           <button
@@ -1180,7 +1174,6 @@ export default function App() {
                       )}
                     </div>
 
-                    {/* RSVP Status / Actions */}
                     <div className="mt-4 pt-3 border-t border-[#F2ECE1]">
                       {isCompleted && !isEditing ? (
                         <div className="space-y-2">
@@ -1269,7 +1262,6 @@ export default function App() {
           </div>
         )}
 
-        {/* TAB 2: ATTENDEE QR SCANNER */}
         {activeTab === 'scan' && (
           <div className="bg-white border border-[#E7DECE] rounded-3xl p-6 text-center shadow-sm">
             <h2 className="text-xl font-serif font-bold text-[#781D26] mb-1">Entrance Check-In</h2>
@@ -1318,7 +1310,6 @@ export default function App() {
           </div>
         )}
 
-        {/* TAB 3: MY SABHA PROFILE */}
         {activeTab === 'profile' && (
           <div className="bg-white border border-[#E7DECE] rounded-3xl p-5 shadow-sm space-y-4">
             <div className="flex items-center gap-2 text-[#781D26]">
@@ -1477,7 +1468,6 @@ export default function App() {
           </div>
         )}
 
-        {/* TAB 4: ADMIN & ORGANIZER CONSOLE */}
         {activeTab === 'admin' && (isSuperAdmin || isOrganizer) && (
           <div className="space-y-6">
             <div className="grid grid-cols-3 gap-2">
@@ -2134,7 +2124,6 @@ export default function App() {
         )}
       </main>
 
-      {/* FAMILY PROFILE MISSING INFORMATION POP-UP MODAL */}
       {showFamilyReminderPopup && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-[#FAF6F0] border-2 border-[#C56B27] rounded-3xl p-6 w-full max-w-sm shadow-2xl relative text-center">
@@ -2178,7 +2167,6 @@ export default function App() {
         </div>
       )}
 
-      {/* SPONSOR GRATITUDE POP-UP MODAL */}
       {sponsorGratitudeEvent && (
         <div className="fixed inset-0 bg-black/65 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-[#FAF6F0] border-2 border-[#C56B27] rounded-3xl p-6 w-full max-w-sm shadow-2xl relative text-center">
@@ -2219,7 +2207,6 @@ export default function App() {
         </div>
       )}
 
-      {/* MANUAL JOIN SABHA CODE MODAL */}
       {showJoinCodeModal && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-[#FAF6F0] border-2 border-[#C56B27] rounded-3xl p-6 w-full max-w-sm shadow-2xl relative text-center">
@@ -2277,7 +2264,6 @@ export default function App() {
         </div>
       )}
 
-      {/* IN-APP POPUP MODAL FOR PENDING RSVP */}
       {showPendingRsvpPopup && popupEvent && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-[#FAF6F0] border-2 border-[#C56B27] rounded-3xl p-6 w-full max-w-sm shadow-2xl relative text-center">
@@ -2326,7 +2312,6 @@ export default function App() {
         </div>
       )}
 
-      {/* FULLSCREEN FLYER VIEWER MODAL */}
       {selectedFlyerUrl && (
         <div className="fixed inset-0 bg-black/85 backdrop-blur-sm z-50 flex items-center justify-center p-3">
           <div className="relative max-w-sm w-full bg-black rounded-3xl overflow-hidden shadow-2xl flex flex-col items-center">
@@ -2354,7 +2339,6 @@ export default function App() {
         </div>
       )}
 
-      {/* RSVP QUESTIONNAIRE MODAL FOR "YES" SUBMISSIONS */}
       {rsvpModalEvent && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-[#FAF6F0] border-2 border-[#C56B27] rounded-3xl p-6 w-full max-w-sm shadow-2xl relative">
@@ -2436,7 +2420,6 @@ export default function App() {
         </div>
       )}
 
-      {/* ENTRANCE QR POSTER MODAL */}
       {selectedEventForQR && (
         <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-[#FAF6F0] border-2 border-[#C56B27] rounded-3xl p-6 w-full max-w-sm text-center shadow-2xl relative">
@@ -2491,7 +2474,6 @@ export default function App() {
         </div>
       )}
 
-      {/* Footer Navigation */}
       <footer className="fixed bottom-0 left-0 right-0 max-w-md mx-auto bg-white border-t border-[#E7DECE] flex justify-around py-3 z-20">
         <button
           onClick={() => setActiveTab('events')}
